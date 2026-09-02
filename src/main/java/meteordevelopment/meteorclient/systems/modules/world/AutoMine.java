@@ -71,7 +71,7 @@ public class AutoMine extends Module {
     );
 
     public AutoMine() {
-        super(Categories.World, "auto-mine", "Automatically mines stone, ores and wood directly in front of you.");
+        super(Categories.World, "auto-mine", "Automatically mines stone, ores, resource blocks and wood directly in front of you.");
     }
 
     @EventHandler
@@ -118,6 +118,20 @@ public class AutoMine extends Module {
             || state.isIn(BlockTags.REDSTONE_ORES)
             || block == Blocks.NETHER_QUARTZ_ORE
             || block == Blocks.ANCIENT_DEBRIS
+            // Resource blocks (and their raw-material variants) are not part of
+            // the ore tags, so include them explicitly.
+            || block == Blocks.COAL_BLOCK
+            || block == Blocks.COPPER_BLOCK
+            || block == Blocks.DIAMOND_BLOCK
+            || block == Blocks.EMERALD_BLOCK
+            || block == Blocks.GOLD_BLOCK
+            || block == Blocks.IRON_BLOCK
+            || block == Blocks.LAPIS_BLOCK
+            || block == Blocks.NETHERITE_BLOCK
+            || block == Blocks.REDSTONE_BLOCK
+            || block == Blocks.RAW_COPPER_BLOCK
+            || block == Blocks.RAW_GOLD_BLOCK
+            || block == Blocks.RAW_IRON_BLOCK
             || state.isIn(BlockTags.LOGS)
             || state.isIn(BlockTags.PLANKS);
 
