@@ -13,7 +13,11 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.player.AutoEat;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.player.FindItemResult;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -72,7 +76,13 @@ public class AutoMine extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (!Utils.canUpdate() || mc.currentScreen != null || mc.interactionManager == null || mc.player.isSpectator()) return;
+        if (!Utils.canUpdate() || mc.interactionManager == null || mc.player.isSpectator()) return;
+
+        // Eating always takes priority over mining. Checking shouldEat as well as
+        // eating prevents this module from switching away from food on the tick
+        // where Auto Eat is about to start.
+        AutoEat autoEat = Modules.get().get(AutoEat.class);
+        if (autoEat.isActive() && (autoEat.eating || autoEat.shouldEat())) return;
 
         if (!(mc.crosshairTarget instanceof BlockHitResult hitResult) || hitResult.getType() != HitResult.Type.BLOCK) return;
 
@@ -80,6 +90,12 @@ public class AutoMine extends Module {
         BlockState blockState = mc.world.getBlockState(blockPos);
 
         if (!isAllowed(blockState) || !BlockUtils.canBreak(blockPos, blockState)) return;
+
+        // Always use the fastest suitable hotbar tool for the targeted block.
+        // Auto Eat restores the previous slot when it finishes; on the following
+        // tick this also switches back to the appropriate mining tool.
+        FindItemResult tool = InvUtils.findFastestTool(blockState);
+        if (tool.found()) InvUtils.swap(tool.slot(), false);
 
         if (rotate.get()) {
             Rotations.rotate(Rotations.getYaw(blockPos), Rotations.getPitch(blockPos), 50, () -> BlockUtils.breakBlock(blockPos, swing.get()));
