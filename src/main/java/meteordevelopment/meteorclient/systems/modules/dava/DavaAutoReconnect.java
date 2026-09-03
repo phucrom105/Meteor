@@ -185,6 +185,7 @@ public class DavaAutoReconnect extends Module {
     private JoinStage joinStage = JoinStage.IDLE;
     private int joinTicks;
     private boolean joiningTarget;
+    private boolean autoJoinFinished;
     private Screen lastMenuScreen;
     private Screen serverSelectionScreen;
     private String serverSelectionTitle;
@@ -205,6 +206,7 @@ public class DavaAutoReconnect extends Module {
         loginCooldown = 0;
         pendingLogin = false;
         joiningTarget = false;
+        autoJoinFinished = false;
 
         if (autoJoin.get() && Utils.canUpdate()) beginAutoJoin();
         else joinStage = JoinStage.IDLE;
@@ -214,6 +216,7 @@ public class DavaAutoReconnect extends Module {
     public void onDeactivate() {
         pendingLogin = false;
         joiningTarget = false;
+        autoJoinFinished = false;
         joinStage = JoinStage.IDLE;
         lastMenuScreen = null;
         serverSelectionScreen = null;
@@ -235,32 +238,35 @@ public class DavaAutoReconnect extends Module {
             return;
         }
 
-        if (!Utils.canUpdate() || !autoJoin.get()) return;
+        if (!Utils.canUpdate() || !autoJoin.get() || autoJoinFinished) return;
         handleAutoJoin();
     }
 
     @EventHandler
     private void onGameJoined(GameJoinedEvent event) {
-        if (joiningTarget) {
-            joiningTarget = false;
-            joinStage = JoinStage.IDLE;
-            lastMenuScreen = null;
-            serverSelectionScreen = null;
-            serverSelectionTitle = null;
+        if (joiningTarget || joinStage == JoinStage.FIND_CONFIRMATION || joinStage == JoinStage.WAITING_FOR_TRANSFER) {
+            finishAutoJoin();
             return;
         }
 
-        if (autoJoin.get()) beginAutoJoin();
+        if (autoJoin.get() && !autoJoinFinished) beginAutoJoin();
     }
 
     @EventHandler
     private void onOpenScreen(OpenScreenEvent event) {
         if (event.screen instanceof DisconnectedScreen) {
             reconnectTicks = secondsToTicks(reconnectDelay.get());
-            joinStage = JoinStage.IDLE;
-            joiningTarget = false;
-            serverSelectionScreen = null;
-            serverSelectionTitle = null;
+
+            // Keep the target-join marker through a transfer. Some proxies briefly show a
+            // DisconnectedScreen while switching backends, and clearing it here makes the
+            // next GameJoinedEvent start the selector again in the target server.
+            boolean targetTransfer = joiningTarget
+                || joinStage == JoinStage.FIND_CONFIRMATION
+                || joinStage == JoinStage.WAITING_FOR_TRANSFER;
+            if (!targetTransfer) {
+                autoJoinFinished = false;
+                stopAutoJoin();
+            }
         }
     }
 
@@ -324,6 +330,15 @@ public class DavaAutoReconnect extends Module {
         }
 
         if (joinStage == JoinStage.WAITING_FOR_TRANSFER) {
+            // A successful transfer can leave no menu open even if the GameJoinedEvent was
+            // delayed or missed. Never retry by clicking the selector in that state unless a
+            // confirmation/menu screen is still visible.
+            HandledScreen<?> screen = getHandledScreen();
+            if (screen == null || screen instanceof InventoryScreen) {
+                finishAutoJoin();
+                return;
+            }
+
             if (retryWhenFull.get()) {
                 warning("The selected server did not open a new world; retrying in %d seconds.", fullRetryDelay.get());
                 scheduleFullRetry();
@@ -356,8 +371,9 @@ public class DavaAutoReconnect extends Module {
             }
 
             // The selector can be a compass or a custom-named item such as "CHỌN MÁY CHỦ".
-            // In the normal player inventory it must be used with the right mouse button.
-            if ((screen instanceof InventoryScreen || !hasContainerSlots(screen.getScreenHandler())) && useServerSelector()) {
+            // Use the held item with the right mouse button even when another container GUI is
+            // open; useServerSelector() closes that GUI before interacting with the item.
+            if (useServerSelector()) {
                 advanceTo(JoinStage.FIND_SKYBLOCK);
             }
             return;
@@ -368,7 +384,13 @@ public class DavaAutoReconnect extends Module {
 
     private void findSkyblockMode() {
         HandledScreen<?> screen = getHandledScreen();
-        if (screen == null) return;
+        if (screen == null) {
+            // Opening a menu is asynchronous. If it did not appear, go back and retry the
+            // selector instead of remaining forever in FIND_SKYBLOCK with no screen.
+            joinStage = JoinStage.FIND_SERVER_SELECTOR;
+            joinTicks = menuDelay.get();
+            return;
+        }
 
         Slot skyblock = findSlot(screen.getScreenHandler(), stack -> containsNormalized(stackText(stack), "skyblock"), true);
         if (skyblock == null) return;
@@ -475,8 +497,17 @@ public class DavaAutoReconnect extends Module {
     private void stopAutoJoin() {
         joiningTarget = false;
         joinStage = JoinStage.IDLE;
+        joinTicks = 0;
+        lastMenuScreen = null;
         serverSelectionScreen = null;
         serverSelectionTitle = null;
+        serversAnnounced = false;
+        discoveredServers.clear();
+    }
+
+    private void finishAutoJoin() {
+        stopAutoJoin();
+        autoJoinFinished = true;
     }
 
     private void findConfirmation() {
@@ -540,16 +571,25 @@ public class DavaAutoReconnect extends Module {
     private boolean useServerSelector() {
         if (mc.interactionManager == null || mc.player == null) return false;
 
-        for (int i = 0; i < 9; i++) {
-            if (!isServerSelector(mc.player.getInventory().getStack(i))) continue;
+        Hand hand = null;
+        if (isServerSelector(mc.player.getMainHandStack())) hand = Hand.MAIN_HAND;
+        else if (isServerSelector(mc.player.getOffHandStack())) hand = Hand.OFF_HAND;
 
-            if (mc.currentScreen != null) mc.currentScreen.close();
-            mc.player.getInventory().setSelectedSlot(i);
-            mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
-            return true;
+        if (hand == null) {
+            for (int i = 0; i < 9; i++) {
+                if (!isServerSelector(mc.player.getInventory().getStack(i))) continue;
+
+                mc.player.getInventory().setSelectedSlot(i);
+                hand = Hand.MAIN_HAND;
+                break;
+            }
         }
 
-        return false;
+        if (hand == null) return false;
+
+        if (mc.currentScreen != null) mc.currentScreen.close();
+        mc.interactionManager.interactItem(mc.player, hand);
+        return true;
     }
 
     private HandledScreen<?> getHandledScreen() {
@@ -565,21 +605,16 @@ public class DavaAutoReconnect extends Module {
         return null;
     }
 
-    private static boolean hasContainerSlots(ScreenHandler handler) {
-        for (Slot slot : handler.slots) {
-            if (isContainerSlot(slot)) return true;
-        }
-
-        return false;
-    }
-
     private static boolean isContainerSlot(Slot slot) {
         return !(slot.inventory instanceof PlayerInventory);
     }
 
     private static boolean isServerSelector(ItemStack stack) {
-        return stack.isOf(Items.COMPASS) || containsNormalized(stackText(stack), "chon may chu")
-            || containsNormalized(stackText(stack), "choose server");
+        String text = stackText(stack);
+        return stack.isOf(Items.COMPASS) || containsNormalized(text, "chon may chu")
+            || containsNormalized(text, "chon server") || containsNormalized(text, "choose server")
+            || containsNormalized(text, "select server") || containsNormalized(text, "server selector")
+            || containsNormalized(text, "server menu");
     }
 
     private static boolean isMenuDecoration(ItemStack stack) {
