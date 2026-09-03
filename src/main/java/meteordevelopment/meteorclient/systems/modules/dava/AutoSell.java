@@ -37,8 +37,9 @@ import java.util.regex.Pattern;
  * reaches the configured threshold.
  */
 public class AutoSell extends Module {
-    private static final int TICKS_PER_SECOND = 20;
     private static final int DEFAULT_COMMAND_DELAY_SECONDS = 5;
+    private static final int COMMAND_RETRY_DELAY_SECONDS = 5;
+    private static final long NANOS_PER_SECOND = 1_000_000_000L;
 
     private static final String STORAGE_TITLE = "kho chua";
     private static final String STORAGE_INFO_TITLE = "thong tin kho chua";
@@ -62,6 +63,9 @@ public class AutoSell extends Module {
     );
     private static final Pattern STATS_STATUS_PATTERN = Pattern.compile(
         "(?i)\\bStatus\\s*:\\s*(?:\\(\\s*(?:status\\s*:\\s*)?([^)]*)\\)|([^|\\r\\n]*))"
+    );
+    private static final Pattern COMMAND_COOLDOWN_PATTERN = Pattern.compile(
+        "(?:\\b(?:wait|cho|doi)\\b)[^0-9]{0,40}[0-9]+(?:\\s+[0-9]+)?\\s*(?:seconds?|secs?|sec|s|giay)\\b"
     );
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -109,12 +113,15 @@ public class AutoSell extends Module {
         .build()
     );
 
-    private int commandCooldownLeft;
-    private int statsTicks;
-    private int statsResponseTicks;
+    private long commandCooldownUntil;
+    private long nextStatsAt;
+    private long statsResponseDeadline;
     private boolean statsRequestPending;
     private boolean triggerArmed;
     private boolean sellPending;
+    private Command lastCommand = Command.NONE;
+    private boolean pauseOnLostFocusBeforeActivation;
+    private boolean pauseOnLostFocusOverridden;
     private WarehouseState state;
     private StatsAccumulator statsAccumulator;
 
@@ -124,69 +131,89 @@ public class AutoSell extends Module {
 
     @Override
     public void onActivate() {
-        commandCooldownLeft = 0;
-        statsTicks = 0;
-        statsResponseTicks = 0;
+        enableBackgroundUpdates();
+        commandCooldownUntil = 0;
+        nextStatsAt = 0;
+        statsResponseDeadline = 0;
         statsRequestPending = false;
         triggerArmed = true;
         sellPending = false;
+        lastCommand = Command.NONE;
         state = null;
         statsAccumulator = null;
     }
 
     @Override
     public void onDeactivate() {
+        restorePauseOnLostFocus();
         state = null;
         statsAccumulator = null;
         statsRequestPending = false;
-        statsResponseTicks = 0;
+        statsResponseDeadline = 0;
         triggerArmed = true;
         sellPending = false;
-        commandCooldownLeft = 0;
+        lastCommand = Command.NONE;
+        commandCooldownUntil = 0;
+        nextStatsAt = 0;
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (commandCooldownLeft > 0) commandCooldownLeft--;
-        if (statsResponseTicks > 0 && --statsResponseTicks == 0) statsRequestPending = false;
+        enableBackgroundUpdates();
+        long now = System.nanoTime();
+        if (statsRequestPending && deadlineReached(statsResponseDeadline, now)) {
+            statsRequestPending = false;
+            statsResponseDeadline = 0;
+            statsAccumulator = null;
+        }
+
+        if (lastCommand != Command.NONE && !statsRequestPending && !sellPending
+            && deadlineReached(commandCooldownUntil, now)) {
+            lastCommand = Command.NONE;
+        }
+
         if (!Utils.canUpdate() || mc.player == null) return;
 
-        if (mc.currentScreen instanceof HandledScreen<?> screen) {
-            if (!isStorageScreen(screen)) return;
-
+        if (mc.currentScreen instanceof HandledScreen<?> screen && isStorageScreen(screen)) {
             WarehouseState detected = detectState(screen.getScreenHandler());
             if (detected != null) processState(detected);
             trySendPendingSell();
             return;
         }
 
-        if (mc.currentScreen != null) return;
         if (sellPending) {
             if (trySendPendingSell()) return;
         }
 
-        if (statsTicks > 0) statsTicks--;
-        else requestStats();
+        if (statsRequestPending || !deadlineReached(nextStatsAt, now)) return;
+        requestStats(now);
     }
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
+        String message = event.getMessage().getString();
+        if (isCommandCooldownMessage(message) && retryLastCommand()) return;
         if (!statsRequestPending) return;
 
-        String message = event.getMessage().getString();
         String normalized = normalize(message);
 
         // The header marks the beginning of a response to the request we just sent. The
         // following lines contain Used/Free/Usage/Status and are received as chat messages.
-        if (normalized.contains("storage stats")) statsAccumulator = new StatsAccumulator();
-        if (statsAccumulator == null) return;
+        boolean responseHeader = normalized.contains("storage stats")
+            || normalized.contains(STORAGE_INFO_TITLE)
+            || normalized.contains("kho stats");
+        if (responseHeader) statsAccumulator = new StatsAccumulator();
+        else if (statsAccumulator == null && !isStatsDataLine(message)) return;
+        else if (statsAccumulator == null) statsAccumulator = new StatsAccumulator();
 
         statsAccumulator.read(message);
         WarehouseState detected = statsAccumulator.toState();
         if (detected == null) return;
 
         statsRequestPending = false;
-        statsResponseTicks = 0;
+        statsResponseDeadline = 0;
+        statsAccumulator = null;
+        lastCommand = Command.NONE;
         processState(detected);
     }
 
@@ -214,26 +241,63 @@ public class AutoSell extends Module {
         trySendPendingSell();
     }
 
-    private void requestStats() {
-        if (commandCooldownLeft > 0 || sellPending) return;
+    private void requestStats(long now) {
+        if (sellPending || statsRequestPending || !deadlineReached(commandCooldownUntil, now)) return;
 
-        statsTicks = secondsToTicks(statsInterval.get());
-        statsResponseTicks = secondsToTicks(statsTimeout.get());
         statsRequestPending = true;
         statsAccumulator = null;
+        nextStatsAt = now + secondsToNanos(statsInterval.get());
+        statsResponseDeadline = now + secondsToNanos(statsTimeout.get());
+        commandCooldownUntil = now + secondsToNanos(delay.get());
+        lastCommand = Command.STATS;
         ChatUtils.sendPlayerMsg("/kho stats", false);
-        commandCooldownLeft = secondsToTicks(delay.get());
     }
 
     private boolean trySendPendingSell() {
-        if (!sellPending || !triggerArmed || commandCooldownLeft > 0) return false;
+        long now = System.nanoTime();
+        if (!sellPending || !triggerArmed || !deadlineReached(commandCooldownUntil, now)) return false;
 
+        commandCooldownUntil = now + secondsToNanos(delay.get());
+        nextStatsAt = now + secondsToNanos(statsInterval.get());
+        lastCommand = Command.SELLALL;
         ChatUtils.sendPlayerMsg("/kho sellall", false);
-        commandCooldownLeft = secondsToTicks(delay.get());
-        statsTicks = secondsToTicks(statsInterval.get());
         sellPending = false;
         triggerArmed = false;
         return true;
+    }
+
+    private boolean retryLastCommand() {
+        if (lastCommand == Command.NONE) return false;
+
+        long retryAt = System.nanoTime() + secondsToNanos(COMMAND_RETRY_DELAY_SECONDS);
+        commandCooldownUntil = retryAt;
+        nextStatsAt = retryAt;
+
+        if (lastCommand == Command.STATS) {
+            statsRequestPending = false;
+            statsResponseDeadline = 0;
+            statsAccumulator = null;
+        } else {
+            sellPending = true;
+            triggerArmed = true;
+        }
+
+        return true;
+    }
+
+    private void enableBackgroundUpdates() {
+        if (pauseOnLostFocusOverridden || mc.options == null) return;
+
+        pauseOnLostFocusBeforeActivation = mc.options.pauseOnLostFocus;
+        mc.options.pauseOnLostFocus = false;
+        pauseOnLostFocusOverridden = true;
+    }
+
+    private void restorePauseOnLostFocus() {
+        if (!pauseOnLostFocusOverridden || mc.options == null) return;
+
+        mc.options.pauseOnLostFocus = pauseOnLostFocusBeforeActivation;
+        pauseOnLostFocusOverridden = false;
     }
 
     @Override
@@ -411,8 +475,21 @@ public class AutoSell extends Module {
         };
     }
 
-    private static int secondsToTicks(int seconds) {
-        return Math.max(1, seconds * TICKS_PER_SECOND);
+    private static boolean isStatsDataLine(String message) {
+        return STATS_USED_PATTERN.matcher(message).find()
+            || STATS_USAGE_PATTERN.matcher(message).find();
+    }
+
+    private static boolean isCommandCooldownMessage(String message) {
+        return COMMAND_COOLDOWN_PATTERN.matcher(normalize(message)).find();
+    }
+
+    private static long secondsToNanos(int seconds) {
+        return Math.max(1L, seconds * NANOS_PER_SECOND);
+    }
+
+    private static boolean deadlineReached(long deadline, long now) {
+        return deadline == 0 || now - deadline >= 0;
     }
 
     private static String normalize(String value) {
@@ -428,6 +505,12 @@ public class AutoSell extends Module {
         }
 
         return result.toString().replaceAll("\\s+", " ").trim();
+    }
+
+    private enum Command {
+        NONE,
+        STATS,
+        SELLALL
     }
 
     private record WarehouseState(long used, long free, long capacity, double usedPercent, double freePercent, boolean active, boolean statusKnown) {
