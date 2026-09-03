@@ -568,6 +568,7 @@ public class Modules extends System<Modules> {
     private void initDava() {
         add(new AutoFix());
         add(new AutoMine());
+        add(new AutoSell());
         add(new DavaAutoReconnect());
     }
 
