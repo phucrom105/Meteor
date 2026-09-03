@@ -3,7 +3,7 @@
  * Copyright (c) Meteor Development.
  */
 
-package meteordevelopment.meteorclient.systems.modules.player;
+package meteordevelopment.meteorclient.systems.modules.dava;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.IntSetting;
@@ -39,7 +39,7 @@ public class AutoFix extends Module {
     private int delayLeft;
 
     public AutoFix() {
-        super(Categories.Player, "auto-fix", "Automatically sends /fix when the held item needs repairing.");
+        super(Categories.Dava, "auto-fix", "Automatically sends /fix when the held item needs repairing.");
     }
 
     @Override

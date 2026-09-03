@@ -3,7 +3,7 @@
  * Copyright (c) Meteor Development.
  */
 
-package meteordevelopment.meteorclient.systems.modules.world;
+package meteordevelopment.meteorclient.systems.modules.dava;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BlockListSetting;
@@ -71,7 +71,7 @@ public class AutoMine extends Module {
     );
 
     public AutoMine() {
-        super(Categories.World, "auto-mine", "Automatically mines stone, ores, resource blocks and wood directly in front of you.");
+        super(Categories.Dava, "auto-mine", "Automatically mines stone, ores, resource blocks and wood directly in front of you.");
     }
 
     @EventHandler

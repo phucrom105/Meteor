@@ -21,6 +21,7 @@ import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.systems.modules.combat.*;
+import meteordevelopment.meteorclient.systems.modules.dava.*;
 import meteordevelopment.meteorclient.systems.modules.misc.*;
 import meteordevelopment.meteorclient.systems.modules.misc.swarm.Swarm;
 import meteordevelopment.meteorclient.systems.modules.movement.*;
@@ -77,6 +78,7 @@ public class Modules extends System<Modules> {
         initMovement();
         initRender();
         initWorld();
+        initDava();
         initMisc();
     }
 
@@ -430,7 +432,6 @@ public class Modules extends System<Modules> {
         add(new AutoEat());
         add(new AutoClicker());
         add(new AutoFish());
-        add(new AutoFix());
         add(new AutoGap());
         add(new AutoMend());
         add(new AutoReplenish());
@@ -537,7 +538,6 @@ public class Modules extends System<Modules> {
         add(new Ambience());
         add(new AutoBreed());
         add(new AutoBrewer());
-        add(new AutoMine());
         add(new AutoMount());
         add(new AutoNametag());
         add(new AutoShearer());
@@ -563,6 +563,12 @@ public class Modules extends System<Modules> {
             add(new Excavator());
             add(new InfinityMiner());
         }
+    }
+
+    private void initDava() {
+        add(new AutoFix());
+        add(new AutoMine());
+        add(new DavaAutoReconnect());
     }
 
     private void initMisc() {
