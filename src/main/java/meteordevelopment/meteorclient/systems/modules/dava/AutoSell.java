@@ -37,6 +37,9 @@ import java.util.regex.Pattern;
  * reaches the configured threshold.
  */
 public class AutoSell extends Module {
+    private static final int TICKS_PER_SECOND = 20;
+    private static final int DEFAULT_COMMAND_DELAY_SECONDS = 5;
+
     private static final String STORAGE_TITLE = "kho chua";
     private static final String STORAGE_INFO_TITLE = "thong tin kho chua";
     private static final String USED_LABEL = "da su dung";
@@ -58,7 +61,7 @@ public class AutoSell extends Module {
         "(?i)\\bUsage\\s*:\\s*([0-9]+(?:[.,][0-9]+)?)\\s*%\\s*/\\s*([0-9]+(?:[.,][0-9]+)?)\\s*%"
     );
     private static final Pattern STATS_STATUS_PATTERN = Pattern.compile(
-        "(?i)\\bStatus\\s*:\\s*\\(status\\s*:\\s*([^)]*)\\)"
+        "(?i)\\bStatus\\s*:\\s*(?:\\(\\s*(?:status\\s*:\\s*)?([^)]*)\\)|([^|\\r\\n]*))"
     );
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -74,43 +77,44 @@ public class AutoSell extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Ticks to wait before another sellall attempt can be made.")
-        .defaultValue(40)
-        .min(1)
-        .sliderMax(200)
+        .description("Seconds to wait between /kho stats and /kho sellall commands.")
+        .defaultValue(DEFAULT_COMMAND_DELAY_SECONDS)
+        .range(DEFAULT_COMMAND_DELAY_SECONDS, 30)
+        .sliderRange(DEFAULT_COMMAND_DELAY_SECONDS, 30)
         .build()
     );
 
     private final Setting<Integer> statsInterval = sgGeneral.add(new IntSetting.Builder()
         .name("stats-interval")
-        .description("Ticks between /kho stats requests when the storage menu is closed.")
-        .defaultValue(100)
-        .min(20)
-        .sliderMax(600)
+        .description("Seconds between /kho stats requests when the storage menu is closed.")
+        .defaultValue(DEFAULT_COMMAND_DELAY_SECONDS)
+        .range(DEFAULT_COMMAND_DELAY_SECONDS, 30)
+        .sliderRange(DEFAULT_COMMAND_DELAY_SECONDS, 30)
         .build()
     );
 
     private final Setting<Integer> statsTimeout = sgGeneral.add(new IntSetting.Builder()
         .name("stats-timeout")
-        .description("Ticks to wait for the /kho stats response before it is discarded.")
-        .defaultValue(40)
-        .min(1)
-        .sliderMax(100)
+        .description("Seconds to wait for the /kho stats response before it is discarded.")
+        .defaultValue(DEFAULT_COMMAND_DELAY_SECONDS)
+        .range(DEFAULT_COMMAND_DELAY_SECONDS, 30)
+        .sliderRange(DEFAULT_COMMAND_DELAY_SECONDS, 30)
         .build()
     );
 
     private final Setting<Boolean> requireActive = sgGeneral.add(new BoolSetting.Builder()
         .name("require-active")
-        .description("Only sends the command when the storage status is detected as BẬT.")
+        .description("Skips sellall only when the storage status is explicitly reported as inactive.")
         .defaultValue(true)
         .build()
     );
 
-    private int delayLeft;
+    private int commandCooldownLeft;
     private int statsTicks;
     private int statsResponseTicks;
     private boolean statsRequestPending;
     private boolean triggerArmed;
+    private boolean sellPending;
     private WarehouseState state;
     private StatsAccumulator statsAccumulator;
 
@@ -120,11 +124,12 @@ public class AutoSell extends Module {
 
     @Override
     public void onActivate() {
-        delayLeft = 0;
+        commandCooldownLeft = 0;
         statsTicks = 0;
         statsResponseTicks = 0;
         statsRequestPending = false;
         triggerArmed = true;
+        sellPending = false;
         state = null;
         statsAccumulator = null;
     }
@@ -136,12 +141,13 @@ public class AutoSell extends Module {
         statsRequestPending = false;
         statsResponseTicks = 0;
         triggerArmed = true;
-        delayLeft = 0;
+        sellPending = false;
+        commandCooldownLeft = 0;
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (delayLeft > 0) delayLeft--;
+        if (commandCooldownLeft > 0) commandCooldownLeft--;
         if (statsResponseTicks > 0 && --statsResponseTicks == 0) statsRequestPending = false;
         if (!Utils.canUpdate() || mc.player == null) return;
 
@@ -150,10 +156,15 @@ public class AutoSell extends Module {
 
             WarehouseState detected = detectState(screen.getScreenHandler());
             if (detected != null) processState(detected);
+            trySendPendingSell();
             return;
         }
 
         if (mc.currentScreen != null) return;
+        if (sellPending) {
+            if (trySendPendingSell()) return;
+        }
+
         if (statsTicks > 0) statsTicks--;
         else requestStats();
     }
@@ -182,31 +193,47 @@ public class AutoSell extends Module {
     private void processState(WarehouseState detected) {
         state = detected;
 
-        // Do not send a command while the server reports that the warehouse is disabled.
-        if (requireActive.get() && detected.statusKnown() && !detected.active()) return;
-        if (requireActive.get() && !detected.statusKnown()) return;
+        // Do not send a command while the server explicitly reports that the warehouse is
+        // disabled. Some /kho stats responses contain the literal "Status: (status)" and
+        // do not expose a usable status value, so an unknown status must not block selling.
+        if (requireActive.get() && detected.statusKnown() && !detected.active()) {
+            sellPending = false;
+            return;
+        }
 
         boolean thresholdReached = detected.usedPercent() >= usedThreshold.get();
         if (!thresholdReached) {
             // Re-arm only after the observed usage falls below the threshold. This prevents
             // repeated commands when /kho sellall has not yet changed the menu contents.
             triggerArmed = true;
+            sellPending = false;
             return;
         }
 
-        if (triggerArmed && delayLeft <= 0) {
-            ChatUtils.sendPlayerMsg("/kho sellall", false);
-            delayLeft = delay.get();
-            triggerArmed = false;
-        }
+        if (triggerArmed) sellPending = true;
+        trySendPendingSell();
     }
 
     private void requestStats() {
-        statsTicks = statsInterval.get();
-        statsResponseTicks = statsTimeout.get();
+        if (commandCooldownLeft > 0 || sellPending) return;
+
+        statsTicks = secondsToTicks(statsInterval.get());
+        statsResponseTicks = secondsToTicks(statsTimeout.get());
         statsRequestPending = true;
         statsAccumulator = null;
         ChatUtils.sendPlayerMsg("/kho stats", false);
+        commandCooldownLeft = secondsToTicks(delay.get());
+    }
+
+    private boolean trySendPendingSell() {
+        if (!sellPending || !triggerArmed || commandCooldownLeft > 0) return false;
+
+        ChatUtils.sendPlayerMsg("/kho sellall", false);
+        commandCooldownLeft = secondsToTicks(delay.get());
+        statsTicks = secondsToTicks(statsInterval.get());
+        sellPending = false;
+        triggerArmed = false;
+        return true;
     }
 
     @Override
@@ -261,9 +288,11 @@ public class AutoSell extends Module {
                 Matcher matcher = NUMBER_PATTERN.matcher(line);
                 if (matcher.find()) capacity = parseAmount(matcher.group());
             } else if (normalized.startsWith(STATUS_LABEL)) {
-                statusKnown = true;
-                String value = normalized.substring(STATUS_LABEL.length()).trim();
-                active = value.equals("bat") || value.equals("on") || value.equals("enabled") || value.equals("active");
+                Boolean parsedStatus = parseActiveStatus(normalized.substring(STATUS_LABEL.length()));
+                if (parsedStatus != null) {
+                    statusKnown = true;
+                    active = parsedStatus;
+                }
             }
         }
 
@@ -349,10 +378,12 @@ public class AutoSell extends Module {
 
             Matcher statusMatcher = STATS_STATUS_PATTERN.matcher(line);
             if (statusMatcher.find()) {
-                String status = normalize(statusMatcher.group(1));
-                active = status.equals("1") || status.equals("true") || status.equals("on")
-                    || status.equals("enabled") || status.equals("active");
-                statusKnown = true;
+                String statusValue = statusMatcher.group(1) != null ? statusMatcher.group(1) : statusMatcher.group(2);
+                Boolean parsedStatus = parseActiveStatus(statusValue);
+                if (parsedStatus != null) {
+                    active = parsedStatus;
+                    statusKnown = true;
+                }
             }
         }
 
@@ -365,6 +396,23 @@ public class AutoSell extends Module {
 
             return new WarehouseState(used, free, capacity, usedPercent, freePercent, active, statusKnown);
         }
+    }
+
+    private static Boolean parseActiveStatus(String value) {
+        if (value == null) return null;
+
+        String status = normalize(value);
+        if (status.startsWith("status ")) status = status.substring("status ".length()).trim();
+
+        return switch (status) {
+            case "1", "true", "on", "enabled", "active", "bat" -> true;
+            case "0", "false", "off", "disabled", "inactive", "tat" -> false;
+            default -> null;
+        };
+    }
+
+    private static int secondsToTicks(int seconds) {
+        return Math.max(1, seconds * TICKS_PER_SECOND);
     }
 
     private static String normalize(String value) {
