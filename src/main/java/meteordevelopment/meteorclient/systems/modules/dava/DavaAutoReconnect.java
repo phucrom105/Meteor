@@ -24,6 +24,7 @@ import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -41,6 +42,7 @@ import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ChatCommandSignedC2SPacket;
+import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
@@ -292,10 +294,18 @@ public class DavaAutoReconnect extends Module {
      */
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
-        if (!rememberSecret.get() || !(event.packet instanceof ChatCommandSignedC2SPacket packet)) return;
+        if (!rememberSecret.get()) return;
 
-        String secret = extractLoginSecret(packet.command());
-        if (secret != null && !secret.isBlank()) loginSecret.set(secret);
+        String command;
+        if (event.packet instanceof ChatCommandSignedC2SPacket packet) command = packet.command();
+        else if (event.packet instanceof CommandExecutionC2SPacket packet) command = packet.command();
+        else return;
+
+        String secret = extractLoginSecret(command);
+        if (secret == null || secret.isBlank()) return;
+
+        loginSecret.set(secret);
+        Modules.get().save();
     }
 
     private void handleReconnect() {
