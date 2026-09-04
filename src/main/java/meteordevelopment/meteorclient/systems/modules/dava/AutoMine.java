@@ -108,6 +108,7 @@ public class AutoMine extends Module {
         Block block = state.getBlock();
 
         boolean supported = (state.isIn(BlockTags.BASE_STONE_OVERWORLD) || state.isIn(BlockTags.BASE_STONE_NETHER))
+            || block == Blocks.COBBLESTONE
             || state.isIn(BlockTags.COAL_ORES)
             || state.isIn(BlockTags.COPPER_ORES)
             || state.isIn(BlockTags.DIAMOND_ORES)
