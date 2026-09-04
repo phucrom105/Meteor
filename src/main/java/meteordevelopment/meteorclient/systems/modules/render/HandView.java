@@ -39,23 +39,16 @@ public class HandView extends Module {
         .build()
     );
 
-    public final Setting<Boolean> skipSwapping = sgGeneral.add(new BoolSetting.Builder()
-        .name("skip-swapping-animation")
-        .description("Whether or not to skip the item swapping animation")
-        .defaultValue(false)
+    public final Setting<Boolean> showSwapping = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-swapping")
+        .description("Whether or not to show the item swapping animation")
+        .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> disableFoodAnimation = sgGeneral.add(new BoolSetting.Builder()
         .name("disable-eating-animation")
         .description("Disables the eating animation. Potentially desirable if it goes offscreen.")
-        .defaultValue(false)
-        .build()
-    );
-
-    public final Setting<Boolean> swordSlash = sgGeneral.add(new BoolSetting.Builder()
-        .name("sword-slash")
-        .description("Replaces the sword swing animation with the offhand idle animation.")
         .defaultValue(false)
         .build()
     );
@@ -230,16 +223,12 @@ public class HandView extends Module {
         return isActive() && oldAnimations.get();
     }
 
-    public boolean skipSwapping() {
-        return isActive() && skipSwapping.get();
+    public boolean showSwapping() {
+        return isActive() && showSwapping.get();
     }
 
     public boolean disableFoodAnimation() {
         return isActive() && disableFoodAnimation.get();
-    }
-
-    public boolean swordSlash() {
-        return isActive() && swordSlash.get();
     }
 
     public enum SwingMode {

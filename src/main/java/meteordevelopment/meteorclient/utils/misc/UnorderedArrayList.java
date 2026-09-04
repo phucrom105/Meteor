@@ -18,7 +18,6 @@ public class UnorderedArrayList<T> extends AbstractList<T> {
     private transient T[] items;
     private int size;
 
-    @SuppressWarnings("unchecked")
     public UnorderedArrayList() {
         items = (T[]) DEFAULTCAPACITY_EMPTY_ELEMENTDATA;
     }

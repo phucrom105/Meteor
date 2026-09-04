@@ -25,9 +25,6 @@ public class EChestMemory {
     private static int echestOpenedState;
     private static boolean isKnown = false;
 
-    private EChestMemory() {
-    }
-
     @PreInit
     public static void init() {
         MeteorClient.EVENT_BUS.subscribe(EChestMemory.class);

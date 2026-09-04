@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(CreativeInventoryScreen.class)
 public interface CreativeInventoryScreenAccessor {
     @Accessor("selectedTab")
-    static ItemGroup meteor$getSelectedTab() {
+    static ItemGroup getSelectedTab() {
         return null;
     }
 }

@@ -36,12 +36,9 @@ import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.LoreComponent;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.ChatCommandSignedC2SPacket;
 import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -150,7 +147,6 @@ public class DavaAutoReconnect extends Module {
         .name("password-token")
         .description("Password or login token. It is masked in the GUI and stored encrypted in the module configuration.")
         .defaultValue("")
-        .placeholder("Password / token")
         .renderer(SecretRenderer.class)
         .build()
     );
@@ -195,7 +191,7 @@ public class DavaAutoReconnect extends Module {
     private final Set<String> discoveredServers = new LinkedHashSet<>();
 
     public DavaAutoReconnect() {
-        super(Categories.Dava, "dava-auto-reconnect", "Reconnects, logs in, and navigates server menus automatically.", "auto-reconnect-dava", "auto-join-server");
+        super(Categories.Dava, "dava-auto-reconnect", "Reconnects, logs in, and navigates server menus automatically.");
 
         // The reconnect action must still receive ticks while the client is on DisconnectedScreen.
         runInMainMenu = true;
@@ -297,8 +293,7 @@ public class DavaAutoReconnect extends Module {
         if (!rememberSecret.get()) return;
 
         String command;
-        if (event.packet instanceof ChatCommandSignedC2SPacket packet) command = packet.command();
-        else if (event.packet instanceof CommandExecutionC2SPacket packet) command = packet.command();
+        if (event.packet instanceof CommandExecutionC2SPacket packet) command = packet.command();
         else return;
 
         String secret = extractLoginSecret(command);
@@ -317,7 +312,7 @@ public class DavaAutoReconnect extends Module {
         }
 
         reconnectTicks = -1;
-        ConnectScreen.connect(new TitleScreen(), mc, lastServerConnection.left(), lastServerConnection.right(), false, null);
+        ConnectScreen.connect(new TitleScreen(), mc, lastServerConnection.left(), lastServerConnection.right(), false);
     }
 
     private void beginAutoJoin() {
@@ -589,7 +584,7 @@ public class DavaAutoReconnect extends Module {
             for (int i = 0; i < 9; i++) {
                 if (!isServerSelector(mc.player.getInventory().getStack(i))) continue;
 
-                mc.player.getInventory().setSelectedSlot(i);
+                mc.player.getInventory().selectedSlot = i;
                 hand = Hand.MAIN_HAND;
                 break;
             }
@@ -640,28 +635,45 @@ public class DavaAutoReconnect extends Module {
     private static String stackText(ItemStack stack) {
         StringBuilder text = new StringBuilder(stack.getName().getString());
 
-        Text customName = stack.get(DataComponentTypes.CUSTOM_NAME);
-        if (customName != null) text.append(' ').append(customName.getString());
+        NbtCompound nbt = stack.getNbt();
+        if (nbt == null || !nbt.contains("display", NbtElement.COMPOUND_TYPE)) return text.toString();
 
-        Text itemName = stack.get(DataComponentTypes.ITEM_NAME);
-        if (itemName != null) text.append(' ').append(itemName.getString());
+        NbtCompound display = nbt.getCompound("display");
+        if (display.contains("Name", NbtElement.STRING_TYPE)) {
+            appendJsonText(text, display.getString("Name"));
+        }
 
-        LoreComponent lore = stack.get(DataComponentTypes.LORE);
-        if (lore != null) {
-            for (Text line : lore.lines()) text.append(' ').append(line.getString());
+        if (display.contains("Lore", NbtElement.LIST_TYPE)) {
+            NbtList lore = display.getList("Lore", NbtElement.STRING_TYPE);
+            for (NbtElement line : lore) appendJsonText(text, line.asString());
         }
 
         return text.toString();
     }
 
     private static String menuLabel(ItemStack stack) {
-        Text customName = stack.get(DataComponentTypes.CUSTOM_NAME);
-        if (customName != null) return customName.getString();
-
-        Text itemName = stack.get(DataComponentTypes.ITEM_NAME);
-        if (itemName != null) return itemName.getString();
+        NbtCompound nbt = stack.getNbt();
+        if (nbt != null && nbt.contains("display", NbtElement.COMPOUND_TYPE)) {
+            NbtCompound display = nbt.getCompound("display");
+            if (display.contains("Name", NbtElement.STRING_TYPE)) {
+                try {
+                    Text customName = Text.Serialization.fromJson(display.getString("Name"));
+                    if (customName != null) return customName.getString();
+                } catch (Exception ignored) {
+                }
+            }
+        }
 
         return stack.getName().getString();
+    }
+
+    private static void appendJsonText(StringBuilder text, String json) {
+        try {
+            Text line = Text.Serialization.fromJson(json);
+            if (line != null) text.append(' ').append(line.getString());
+        } catch (Exception ignored) {
+            text.append(' ').append(json);
+        }
     }
 
     private static boolean isLoginPrompt(String message) {
@@ -724,7 +736,7 @@ public class DavaAutoReconnect extends Module {
             .replace("{token}", loginSecret.get())
             .replace("{username}", mc.getSession().getUsername());
 
-        ChatUtils.sendPlayerMsg(command, false);
+        ChatUtils.sendPlayerMsg(command);
         loginCooldown = 40;
     }
 
@@ -772,7 +784,7 @@ public class DavaAutoReconnect extends Module {
     public DavaAutoReconnect fromTag(NbtCompound tag) {
         super.fromTag(tag);
 
-        String encrypted = tag.getString(SECRET_TAG, "");
+        String encrypted = tag.contains(SECRET_TAG, NbtElement.STRING_TYPE) ? tag.getString(SECRET_TAG) : "";
         if (!encrypted.isBlank()) {
             String secret = decryptSecret(encrypted);
             if (!secret.isBlank()) loginSecret.set(secret);
@@ -782,15 +794,19 @@ public class DavaAutoReconnect extends Module {
     }
 
     private static void stripPlaintextSecret(NbtCompound tag) {
-        NbtCompound settingsTag = tag.getCompoundOrEmpty("settings");
-        NbtList groups = settingsTag.getListOrEmpty("groups");
+        NbtCompound settingsTag = tag.contains("settings", NbtElement.COMPOUND_TYPE)
+            ? tag.getCompound("settings") : new NbtCompound();
+        NbtList groups = settingsTag.contains("groups", NbtElement.LIST_TYPE)
+            ? settingsTag.getList("groups", NbtElement.COMPOUND_TYPE) : new NbtList();
 
         for (NbtElement groupElement : groups) {
             if (!(groupElement instanceof NbtCompound group)) continue;
 
-            NbtList settings = group.getListOrEmpty("settings");
+            NbtList settings = group.contains("settings", NbtElement.LIST_TYPE)
+                ? group.getList("settings", NbtElement.COMPOUND_TYPE) : new NbtList();
             settings.removeIf(settingElement -> settingElement instanceof NbtCompound setting
-                && setting.getString("name", "").equals("password-token"));
+                && setting.contains("name", NbtElement.STRING_TYPE)
+                && setting.getString("name").equals("password-token"));
         }
     }
 

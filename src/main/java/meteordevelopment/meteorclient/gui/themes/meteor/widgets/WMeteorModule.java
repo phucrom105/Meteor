@@ -19,7 +19,6 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 
 public class WMeteorModule extends WPressable implements MeteorWidget {
     private final Module module;
-    private final String title;
 
     private double titleWidth;
 
@@ -27,9 +26,8 @@ public class WMeteorModule extends WPressable implements MeteorWidget {
 
     private double animationProgress2;
 
-    public WMeteorModule(Module module, String title) {
+    public WMeteorModule(Module module) {
         this.module = module;
-        this.title = title;
         this.tooltip = module.description;
 
         if (module.isActive()) {
@@ -50,7 +48,7 @@ public class WMeteorModule extends WPressable implements MeteorWidget {
     protected void onCalculateSize() {
         double pad = pad();
 
-        if (titleWidth == 0) titleWidth = theme.textWidth(title);
+        if (titleWidth == 0) titleWidth = theme.textWidth(module.title);
 
         width = pad + titleWidth + pad;
         height = pad + theme.textHeight() + pad;
@@ -90,6 +88,6 @@ public class WMeteorModule extends WPressable implements MeteorWidget {
             x += w - titleWidth;
         }
 
-        renderer.text(title, x, y + pad, theme.textColor.get(), false);
+        renderer.text(module.title, x, y + pad, theme.textColor.get(), false);
     }
 }

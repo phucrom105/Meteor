@@ -19,10 +19,7 @@ import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.util.MacWindowUtil;
 import net.minecraft.item.Items;
-import net.minecraft.util.Pair;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,15 +27,12 @@ import java.util.Set;
 
 import static meteordevelopment.meteorclient.utils.Utils.getWindowHeight;
 import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
-import static org.lwjgl.glfw.GLFW.*;
 
 public class ModulesScreen extends TabScreen {
     private WCategoryController controller;
-    private WWindow searchWindow;
-    private WTextBox searchTextBox;
 
     public ModulesScreen(GuiTheme theme) {
-        super(theme, Tabs.get().getFirst());
+        super(theme, Tabs.get().get(0));
     }
 
     @Override
@@ -59,7 +53,7 @@ public class ModulesScreen extends TabScreen {
 
     // Category
 
-    protected WWindow createCategory(WContainer c, Category category, List<Module> moduleList) {
+    protected WWindow createCategory(WContainer c, Category category) {
         WWindow w = theme.window(category.name);
         w.id = category.name;
         w.padding = 0;
@@ -74,7 +68,7 @@ public class ModulesScreen extends TabScreen {
         w.view.hasScrollBar = false;
         w.view.spacing = 0;
 
-        for (Module module : moduleList) {
+        for (Module module : Modules.get().getGroup(category)) {
             w.add(theme.module(module)).expandX();
         }
 
@@ -86,30 +80,30 @@ public class ModulesScreen extends TabScreen {
     protected void createSearchW(WContainer w, String text) {
         if (!text.isEmpty()) {
             // Titles
-            List<Pair<Module, String>> modules = Modules.get().searchTitles(text);
+            Set<Module> modules = Modules.get().searchTitles(text);
 
-            if (!modules.isEmpty()) {
+            if (modules.size() > 0) {
                 WSection section = w.add(theme.section("Modules")).expandX().widget();
                 section.spacing = 0;
 
                 int count = 0;
-                for (Pair<Module, String> p : modules) {
+                for (Module module : modules) {
                     if (count >= Config.get().moduleSearchCount.get() || count >= modules.size()) break;
-                    section.add(theme.module(p.getLeft(), p.getRight())).expandX();
+                    section.add(theme.module(module)).expandX();
                     count++;
                 }
             }
 
             // Settings
-            Set<Module> settings = Modules.get().searchSettingTitles(text);
+            modules = Modules.get().searchSettingTitles(text);
 
-            if (!settings.isEmpty()) {
+            if (modules.size() > 0) {
                 WSection section = w.add(theme.section("Settings")).expandX().widget();
                 section.spacing = 0;
 
                 int count = 0;
-                for (Module module : settings) {
-                    if (count >= Config.get().moduleSearchCount.get() || count >= settings.size()) break;
+                for (Module module : modules) {
+                    if (count >= Config.get().moduleSearchCount.get() || count >= modules.size()) break;
                     section.add(theme.module(module)).expandX();
                     count++;
                 }
@@ -120,7 +114,6 @@ public class ModulesScreen extends TabScreen {
     protected WWindow createSearch(WContainer c) {
         WWindow w = theme.window("Search");
         w.id = "search";
-        searchWindow = w;
 
         if (theme.categoryIcons()) {
             w.beforeHeaderInit = wContainer -> wContainer.add(theme.item(Items.COMPASS.getDefaultStack())).pad(2);
@@ -135,7 +128,6 @@ public class ModulesScreen extends TabScreen {
 
         WTextBox text = w.add(theme.textBox("")).minWidth(140).expandX().widget();
         text.setFocused(true);
-        searchTextBox = text;
         text.action = () -> {
             l.clear();
             createSearchW(l, text.get());
@@ -145,25 +137,6 @@ public class ModulesScreen extends TabScreen {
         createSearchW(l, text.get());
 
         return w;
-    }
-
-    @Override
-    public boolean keyPressed(KeyInput value) {
-        if (locked) return false;
-
-        boolean cntrl = MacWindowUtil.IS_MAC ? value.modifiers() == GLFW_MOD_SUPER : value.modifiers() == GLFW_MOD_CONTROL;
-
-        if (cntrl && value.key() == GLFW_KEY_F) {
-            if (searchWindow != null) searchWindow.setExpanded(true);
-            if (searchTextBox != null) {
-                searchTextBox.setFocused(true);
-                searchTextBox.setCursorMax();
-            }
-
-            return true;
-        }
-
-        return super.keyPressed(value);
     }
 
     // Favorites
@@ -219,8 +192,7 @@ public class ModulesScreen extends TabScreen {
     }
 
     @Override
-    public void reload() {
-    }
+    public void reload() {}
 
     // Stuff
 
@@ -230,19 +202,8 @@ public class ModulesScreen extends TabScreen {
 
         @Override
         public void init() {
-            List<Module> moduleList = new ArrayList<>();
             for (Category category : Modules.loopCategories()) {
-                for (Module module : Modules.get().getGroup(category)) {
-                    if (!Config.get().hiddenModules.get().contains(module)) {
-                        moduleList.add(module);
-                    }
-                }
-
-                // Ensure empty categories are not shown
-                if (!moduleList.isEmpty()) {
-                    windows.add(createCategory(this, category, moduleList));
-                    moduleList.clear();
-                }
+                windows.add(createCategory(this, category));
             }
 
             windows.add(createSearch(this));
@@ -254,7 +215,8 @@ public class ModulesScreen extends TabScreen {
             if (favorites == null) {
                 favorites = createFavorites(this);
                 if (favorites != null) windows.add(favorites.widget());
-            } else {
+            }
+            else {
                 favorites.widget().clear();
 
                 if (!createFavoritesW(favorites.widget())) {

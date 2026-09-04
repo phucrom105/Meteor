@@ -1,93 +1,66 @@
 package meteordevelopment.meteorclient.utils.render.postprocess;
 
-import com.mojang.blaze3d.buffers.Std140Builder;
-import com.mojang.blaze3d.buffers.Std140SizeCalculator;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.renderer.MeshRenderer;
-import net.minecraft.client.gl.DynamicUniformStorage;
+import meteordevelopment.meteorclient.renderer.GL;
+import meteordevelopment.meteorclient.renderer.PostProcessRenderer;
+import meteordevelopment.meteorclient.renderer.Shader;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.gl.SimpleFramebuffer;
-
-import java.nio.ByteBuffer;
+import net.minecraft.client.render.OutlineVertexConsumerProvider;
+import net.minecraft.entity.Entity;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static org.lwjgl.glfw.GLFW.glfwGetTime;
 
 public abstract class PostProcessShader {
-    protected final RenderPipeline pipeline;
-    public final Framebuffer framebuffer;
+    public OutlineVertexConsumerProvider vertexConsumerProvider;
+    public Framebuffer framebuffer;
+    protected Shader shader;
 
-    protected PostProcessShader(RenderPipeline pipeline) {
-        this.pipeline = pipeline;
-        this.framebuffer = new SimpleFramebuffer(MeteorClient.NAME + " PostProcessShader " + this.getClass().getSimpleName(), mc.getWindow().getFramebufferWidth(), mc.getWindow().getFramebufferHeight(), true);
+    public void init(String frag) {
+        vertexConsumerProvider = new OutlineVertexConsumerProvider(mc.getBufferBuilders().getEntityVertexConsumers());
+        framebuffer = new SimpleFramebuffer(mc.getWindow().getFramebufferWidth(), mc.getWindow().getFramebufferHeight(), false, MinecraftClient.IS_SYSTEM_MAC);
+        shader = new Shader("post-process/base.vert", "post-process/" + frag + ".frag");
     }
 
     protected abstract boolean shouldDraw();
+    public abstract boolean shouldDraw(Entity entity);
 
     protected void preDraw() {}
     protected void postDraw() {}
 
-    protected abstract void setupPass(MeshRenderer renderer);
+    protected abstract void setUniforms();
 
-    public void clearTexture() {
-        if (this.shouldDraw()) {
-            RenderSystem.getDevice().createCommandEncoder().clearColorTexture(framebuffer.getColorAttachment(), 0);
-        }
+    public void beginRender() {
+        if (!shouldDraw()) return;
+
+        framebuffer.clear(MinecraftClient.IS_SYSTEM_MAC);
+        mc.getFramebuffer().beginWrite(false);
     }
 
-    public void submitVertices(Runnable draw) {
+    public void endRender(Runnable draw) {
         if (!shouldDraw()) return;
 
         preDraw();
         draw.run();
         postDraw();
-    }
 
-    public void render() {
-        if (!shouldDraw()) return;
+        mc.getFramebuffer().beginWrite(false);
 
-        var renderer = MeshRenderer.begin()
-            .attachments(mc.getFramebuffer())
-            .pipeline(pipeline)
-            .fullscreen()
-            .uniform("PostData", UNIFORM_STORAGE.write(new UniformData(
-                (float) mc.getWindow().getFramebufferWidth(), (float) mc.getWindow().getFramebufferHeight(),
-                (float) glfwGetTime()
-            )))
-            .sampler("u_Texture", framebuffer.getColorAttachmentView(), RenderSystem.getSamplerCache().get(FilterMode.NEAREST));
+        GL.bindTexture(framebuffer.getColorAttachment(), 0);
 
-        setupPass(renderer);
+        shader.bind();
 
-        renderer.end();
+        shader.set("u_Size", mc.getWindow().getFramebufferWidth(), mc.getWindow().getFramebufferHeight());
+        shader.set("u_Texture", 0);
+        shader.set("u_Time", glfwGetTime());
+        setUniforms();
+
+        PostProcessRenderer.render();
     }
 
     public void onResized(int width, int height) {
         if (framebuffer == null) return;
-        framebuffer.resize(width, height);
-    }
-
-    // Uniforms
-
-    private static final int UNIFORM_SIZE = new Std140SizeCalculator()
-        .putVec2()
-        .putFloat()
-        .get();
-
-    private static final DynamicUniformStorage<UniformData> UNIFORM_STORAGE = new DynamicUniformStorage<>("Meteor - Post UBO", UNIFORM_SIZE, 16);
-
-    public static void flipFrame() {
-        UNIFORM_STORAGE.clear();
-    }
-
-    private record UniformData(float sizeX, float sizeY, float time) implements DynamicUniformStorage.Uploadable {
-        @Override
-        public void write(ByteBuffer buffer) {
-            Std140Builder.intoBuffer(buffer)
-                .putVec2(sizeX, sizeY)
-                .putFloat(time);
-        }
+        framebuffer.resize(width, height, MinecraftClient.IS_SYSTEM_MAC);
     }
 }

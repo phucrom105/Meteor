@@ -15,11 +15,11 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.misc.MeteorStarscript;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import org.meteordev.starscript.Script;
-import org.meteordev.starscript.Section;
-import org.meteordev.starscript.compiler.Compiler;
-import org.meteordev.starscript.compiler.Parser;
-import org.meteordev.starscript.utils.StarscriptError;
+import meteordevelopment.starscript.Script;
+import meteordevelopment.starscript.Section;
+import meteordevelopment.starscript.compiler.Compiler;
+import meteordevelopment.starscript.compiler.Parser;
+import meteordevelopment.starscript.utils.StarscriptError;
 
 import java.util.List;
 
@@ -89,6 +89,7 @@ public class TextHud extends HudElement {
         .name("condition")
         .description("Condition to check when shown is not Always.")
         .visible(() -> shown.get() != Shown.Always)
+        .defaultValue("")
         .onChanged(s -> recompile())
         .renderer(StarscriptTextBoxRenderer.class)
         .build()
@@ -98,9 +99,9 @@ public class TextHud extends HudElement {
 
     public final Setting<Boolean> customScale = sgScale.add(new BoolSetting.Builder()
         .name("custom-scale")
-        .description("Applies a custom scale to this hud element.")
+        .description("Applies custom text scale rather than the global one.")
         .defaultValue(false)
-        .onChanged(aBoolean -> recalculateSize = true)
+        .onChanged(integer -> recalculateSize = true)
         .build()
     );
 
@@ -109,7 +110,7 @@ public class TextHud extends HudElement {
         .description("Custom scale.")
         .visible(customScale::get)
         .defaultValue(1)
-        .onChanged(aDouble -> recalculateSize = true)
+        .onChanged(integer -> recalculateSize = true)
         .min(0.5)
         .sliderRange(0.5, 3)
         .build()
@@ -195,7 +196,7 @@ public class TextHud extends HudElement {
 
             if (result.hasErrors()) {
                 script = null;
-                section = new Section(0, result.errors.getFirst().toString());
+                section = new Section(0, result.errors.get(0).toString());
                 calculateSize(renderer);
             }
             else script = Compiler.compile(result);
@@ -259,7 +260,7 @@ public class TextHud extends HudElement {
     }
 
     private double getScale() {
-        return customScale.get() ? scale.get() : Hud.get().getTextScale();
+        return customScale.get() ? scale.get() : -1;
     }
 
     public static Color getSectionColor(int i) {

@@ -12,7 +12,6 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.meteor.CustomFontChangedEvent;
-import meteordevelopment.meteorclient.mixininterface.IGameRenderer;
 import meteordevelopment.meteorclient.renderer.*;
 import meteordevelopment.meteorclient.renderer.text.CustomTextRenderer;
 import meteordevelopment.meteorclient.renderer.text.Font;
@@ -22,21 +21,16 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.entity.state.LivingEntityRenderState;
-import net.minecraft.entity.LivingEntity;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.Identifier;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
+import org.lwjgl.BufferUtils;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-
-import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class HudRenderer {
     public static final HudRenderer INSTANCE = new HudRenderer();
@@ -51,7 +45,7 @@ public class HudRenderer {
         .maximumSize(4)
         .expireAfterAccess(Duration.ofMinutes(10))
         .removalListener(notification -> {
-            if (notification.wasEvicted())
+            if (notification.wasEvicted()) //noinspection ConstantConditions
                 ((FontHolder) notification.getValue()).destroy();
         })
         .build(CacheLoader.from(HudRenderer::loadFont));
@@ -69,8 +63,6 @@ public class HudRenderer {
         this.drawContext = drawContext;
         this.delta = Utils.frameTime;
 
-        drawContext.createNewRootLayer();
-
         if (!hud.hasCustomFont()) {
             VanillaTextRenderer.INSTANCE.scaleIndividually = true;
             VanillaTextRenderer.INSTANCE.begin();
@@ -78,7 +70,7 @@ public class HudRenderer {
     }
 
     public void end() {
-        Renderer2D.COLOR.render();
+        Renderer2D.COLOR.render(new MatrixStack());
 
         if (hud.hasCustomFont()) {
             // Render fonts that were visited this frame and move to cache which weren't visited
@@ -86,12 +78,8 @@ public class HudRenderer {
                 FontHolder fontHolder = it.next();
 
                 if (fontHolder.visited) {
-                    MeshRenderer.begin()
-                        .attachments(mc.getFramebuffer())
-                        .pipeline(MeteorRenderPipelines.UI_TEXT)
-                        .mesh(fontHolder.getMesh())
-                        .sampler("u_Texture", fontHolder.font.texture.getGlTextureView(), fontHolder.font.texture.getSampler())
-                        .end();
+                    GL.bindTexture(fontHolder.font.texture.getGlId());
+                    fontHolder.getMesh().render(null);
                 }
                 else {
                     it.remove();
@@ -109,9 +97,7 @@ public class HudRenderer {
         for (Runnable task : postTasks) task.run();
         postTasks.clear();
 
-        drawContext.createNewRootLayer();
-
-        drawContext = null;
+        this.drawContext = null;
     }
 
     public void line(double x1, double y1, double x2, double y2, Color color) {
@@ -131,9 +117,11 @@ public class HudRenderer {
     }
 
     public void texture(Identifier id, double x, double y, double width, double height, Color color) {
+        GL.bindTexture(id);
+
         Renderer2D.TEXTURE.begin();
         Renderer2D.TEXTURE.texQuad(x, y, width, height, color);
-        Renderer2D.TEXTURE.render(mc.getTextureManager().getTexture(id).getGlTextureView(), mc.getTextureManager().getTexture(id).getSampler());
+        Renderer2D.TEXTURE.render(null);
     }
 
     public double text(String text, double x, double y, Color color, boolean shadow, double scale) {
@@ -147,7 +135,7 @@ public class HudRenderer {
         FontHolder fontHolder = getFontHolder(scale, true);
 
         Font font = fontHolder.font;
-        MeshBuilder mesh = fontHolder.getMesh();
+        Mesh mesh = fontHolder.getMesh();
 
         double width;
 
@@ -212,47 +200,11 @@ public class HudRenderer {
     }
 
     public void item(ItemStack itemStack, int x, int y, float scale, boolean overlay, String countOverlay) {
-        RenderUtils.drawItem(drawContext, itemStack, x, y, scale, overlay, countOverlay, true);
+        RenderUtils.drawItem(drawContext, itemStack, x, y, scale, overlay, countOverlay);
     }
 
     public void item(ItemStack itemStack, int x, int y, float scale, boolean overlay) {
         RenderUtils.drawItem(drawContext, itemStack, x, y, scale, overlay);
-    }
-
-    public void entity(LivingEntity entity,  int x, int y, int width, int height, float yaw, float pitch) {
-        float previousBodyYaw = entity.bodyYaw;
-        float previousYaw = entity.getYaw();
-        float previousPitch = entity.getPitch();
-        float lastLastHeadYaw = entity.lastHeadYaw;
-        float lastHeadYaw = entity.headYaw;
-
-        float tanYaw = (float) Math.atan((yaw) / 40.0f);
-        float tanPitch = (float) Math.atan((pitch) / 40.0f);
-        entity.bodyYaw = 180.0f + tanYaw * 20.0f;
-        entity.setYaw(180.0f + tanYaw * 40.0f);
-        entity.setPitch(-tanPitch * 20.0f);
-        entity.headYaw = entity.getYaw();
-        entity.lastHeadYaw = entity.getYaw();
-
-        var state = (LivingEntityRenderState) mc.getEntityRenderDispatcher().getRenderer(entity).getAndUpdateRenderState(entity, 1);
-
-        entity.bodyYaw = previousBodyYaw;
-        entity.setYaw(previousYaw);
-        entity.setPitch(previousPitch);
-        entity.lastHeadYaw = lastLastHeadYaw;
-        entity.headYaw = lastHeadYaw;
-
-        float s = 1.0f / mc.getWindow().getScaleFactor();
-        int x1 = (int) (x * s);
-        int y1 = (int) (y * s);
-        int x2 = (int) ((x + width) * s);
-        int y2 = (int) ((y + height) * s);
-
-        float scale = Math.max(width, height) * s / 2f;
-        Vector3f translation = new Vector3f(0, 1f, 0);
-        Quaternionf rotation = new Quaternionf().rotateZ((float) Math.PI);
-
-        drawContext.addEntity(state, scale, translation, rotation, null, x1, y1, x2, y2);
     }
 
     private FontHolder getFontHolder(double scale, boolean render) {
@@ -299,32 +251,31 @@ public class HudRenderer {
     }
 
     private static FontHolder loadFont(int height) {
-        try {
-            ByteBuffer buffer = Fonts.RENDERER.fontFace.readToDirectByteBuffer();
-            return new FontHolder(new Font(buffer, height));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load font: " + Fonts.RENDERER.fontFace, e);
-        }
+        byte[] data = Utils.readBytes(Fonts.RENDERER.fontFace.toStream());
+        ByteBuffer buffer = BufferUtils.createByteBuffer(data.length).put(data).flip();
+
+        return new FontHolder(new Font(buffer, height));
     }
 
     private static class FontHolder {
         public final Font font;
         public boolean visited;
 
-        private MeshBuilder mesh;
+        private Mesh mesh;
 
         public FontHolder(Font font) {
             this.font = font;
         }
 
-        public MeshBuilder getMesh() {
-            if (mesh == null) mesh = new MeshBuilder(MeteorRenderPipelines.UI_TEXT);
+        public Mesh getMesh() {
+            if (mesh == null) mesh = new ShaderMesh(Shaders.TEXT, DrawMode.Triangles, Mesh.Attrib.Vec2, Mesh.Attrib.Vec2, Mesh.Attrib.Color);
             if (!mesh.isBuilding()) mesh.begin();
             return mesh;
         }
 
         public void destroy() {
-            font.texture.close();
+            font.texture.clearGlId();
+            if (mesh != null) mesh.destroy();
         }
     }
 }

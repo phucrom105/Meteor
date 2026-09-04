@@ -123,7 +123,7 @@ public class PotionTimersHud extends HudElement {
 
     private final Setting<Boolean> customScale = sgScale.add(new BoolSetting.Builder()
         .name("custom-scale")
-        .description("Applies a custom scale to this hud element.")
+        .description("Applies custom text scale rather than the global one.")
         .defaultValue(false)
         .build()
     );
@@ -185,7 +185,7 @@ public class PotionTimersHud extends HudElement {
         texts.clear();
 
         for (StatusEffectInstance statusEffectInstance : mc.player.getStatusEffects()) {
-            if (hiddenEffects.get().contains(statusEffectInstance.getEffectType().value())) continue;
+            if (hiddenEffects.get().contains(statusEffectInstance.getEffectType())) continue;
             if (!showAmbient.get() && statusEffectInstance.isAmbient()) continue;
             String text = getString(statusEffectInstance);
             texts.add(new ObjectObjectImmutablePair<>(statusEffectInstance, text));
@@ -219,7 +219,7 @@ public class PotionTimersHud extends HudElement {
         for (Pair<StatusEffectInstance, String> potionEffectEntry : texts) {
             Color color = switch (colorMode.get()) {
                 case Effect -> {
-                    int c = potionEffectEntry.left().getEffectType().value().getColor();
+                    int c = potionEffectEntry.left().getEffectType().getColor();
                     yield new Color(c).a(255);
                 }
                 case Flat -> {
@@ -241,16 +241,16 @@ public class PotionTimersHud extends HudElement {
     }
 
     private String getString(StatusEffectInstance statusEffectInstance) {
-        return String.format("%s %d (%s)", Names.get(statusEffectInstance.getEffectType().value()), statusEffectInstance.getAmplifier() + 1, StatusEffectUtil.getDurationText(statusEffectInstance, 1, mc.world.getTickManager().getTickRate()).getString());
+        return String.format("%s %d (%s)", Names.get(statusEffectInstance.getEffectType()), statusEffectInstance.getAmplifier() + 1, StatusEffectUtil.getDurationText(statusEffectInstance, 1, mc.world.getTickManager().getTickRate()).getString());
     }
 
     private double getScale() {
-        return customScale.get() ? scale.get() : Hud.get().getTextScale();
+        return customScale.get() ? scale.get() : -1;
     }
 
     private boolean hasNoVisibleEffects() {
         for (StatusEffectInstance statusEffectInstance : mc.player.getStatusEffects()) {
-            if (hiddenEffects.get().contains(statusEffectInstance.getEffectType().value())) continue;
+            if (hiddenEffects.get().contains(statusEffectInstance.getEffectType())) continue;
             if (!showAmbient.get() && statusEffectInstance.isAmbient()) continue;
             return false;
         }

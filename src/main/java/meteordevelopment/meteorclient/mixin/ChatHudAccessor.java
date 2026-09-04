@@ -15,8 +15,8 @@ import java.util.List;
 @Mixin(ChatHud.class)
 public interface ChatHudAccessor {
     @Accessor("visibleMessages")
-    List<ChatHudLine.Visible> meteor$getVisibleMessages();
+    List<ChatHudLine.Visible> getVisibleMessages();
 
     @Accessor("messages")
-    List<ChatHudLine> meteor$getMessages();
+    List<ChatHudLine> getMessages();
 }

@@ -16,6 +16,8 @@ import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import net.minecraft.command.CommandSource;
 import net.minecraft.util.Formatting;
 
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+
 public class FriendsCommand extends Command {
     public FriendsCommand() {
         super("friends", "Manages friends.");
@@ -27,7 +29,7 @@ public class FriendsCommand extends Command {
             .then(argument("player", PlayerListEntryArgumentType.create())
                 .executes(context -> {
                     GameProfile profile = PlayerListEntryArgumentType.get(context).getProfile();
-                    Friend friend = new Friend(profile.name(), profile.id());
+                    Friend friend = new Friend(profile.getName(), profile.getId());
 
                     if (Friends.get().add(friend)) {
                         ChatUtils.sendMsg(friend.hashCode(), Formatting.GRAY, "Added (highlight)%s (default)to friends.".formatted(friend.getName()));

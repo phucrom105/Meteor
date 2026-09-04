@@ -42,21 +42,13 @@ public class FakePlayer extends Module {
         .build()
     );
 
-    private WTable table;
-
     public FakePlayer() {
         super(Categories.Player, "fake-player", "Spawns a client-side fake player for testing usages. No need to be active.");
     }
 
     @Override
-    public void onDeactivate() {
-        FakePlayerManager.clear();
-        if (table != null) table.clear();
-    }
-
-    @Override
     public WWidget getWidget(GuiTheme theme) {
-        table = theme.table();
+        WTable table = theme.table();
         fillTable(theme, table);
 
         return table;

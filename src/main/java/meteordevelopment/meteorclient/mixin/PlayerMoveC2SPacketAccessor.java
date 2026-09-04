@@ -14,9 +14,9 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface PlayerMoveC2SPacketAccessor {
     @Mutable
     @Accessor("y")
-    void meteor$setY(double y);
+    void setY(double y);
 
     @Mutable
     @Accessor("onGround")
-    void meteor$setOnGround(boolean onGround);
+    void setOnGround(boolean onGround);
 }

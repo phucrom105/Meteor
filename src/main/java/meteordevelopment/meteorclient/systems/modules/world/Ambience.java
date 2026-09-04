@@ -13,6 +13,8 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import net.minecraft.client.render.DimensionEffects;
+import net.minecraft.util.math.Vec3d;
 
 /**
  * @author Walaryne
@@ -160,21 +162,6 @@ public class Ambience extends Module {
         .build()
     );
 
-    public final Setting<Boolean> customFogColor = sgWorld.add(new BoolSetting.Builder()
-        .name("custom-fog-color")
-        .description("Whether the fog color should be changed.")
-        .defaultValue(false)
-        .build()
-    );
-
-    public final Setting<SettingColor> fogColor = sgWorld.add(new ColorSetting.Builder()
-        .name("fog-color")
-        .description("The color of the fog.")
-        .defaultValue(new SettingColor(102, 0, 0))
-        .visible(customFogColor::get)
-        .build()
-    );
-
     public Ambience() {
         super(Categories.World, "ambience", "Change the color of various pieces of the environment.");
     }
@@ -191,6 +178,27 @@ public class Ambience extends Module {
 
     private void reload() {
         if (mc.worldRenderer != null && isActive()) mc.worldRenderer.reload();
+    }
+
+    public static class Custom extends DimensionEffects {
+        public Custom() {
+            super(Float.NaN, true, DimensionEffects.SkyType.END, true, false);
+        }
+
+        @Override
+        public Vec3d adjustFogColor(Vec3d color, float sunHeight) {
+            return color.multiply(0.15000000596046448D);
+        }
+
+        @Override
+        public boolean useThickFog(int camX, int camY) {
+            return false;
+        }
+
+        @Override
+        public float[] getFogColorOverride(float skyAngle, float tickDelta) {
+            return null;
+        }
     }
 
     public SettingColor skyColor() {

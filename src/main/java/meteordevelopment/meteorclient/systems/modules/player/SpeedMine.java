@@ -105,12 +105,12 @@ public class SpeedMine extends Module {
         }
         else if (mode.get() == Mode.Damage) {
             ClientPlayerInteractionManagerAccessor im = (ClientPlayerInteractionManagerAccessor) mc.interactionManager;
-            float progress = im.meteor$getBreakingProgress();
-            BlockPos pos = im.meteor$getCurrentBreakingBlockPos();
+            float progress = im.getBreakingProgress();
+            BlockPos pos = im.getCurrentBreakingBlockPos();
 
             if (pos == null || progress <= 0) return;
             if (progress + mc.world.getBlockState(pos).calcBlockBreakingDelta(mc.player, mc.world, pos) >= 0.7f)
-                im.meteor$setCurrentBreakingProgress(1f);
+                im.setCurrentBreakingProgress(1f);
         }
     }
 

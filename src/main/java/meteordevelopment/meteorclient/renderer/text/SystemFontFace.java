@@ -1,15 +1,11 @@
 package meteordevelopment.meteorclient.renderer.text;
 
-import org.jspecify.annotations.NullMarked;
+import meteordevelopment.meteorclient.utils.render.FontUtils;
 
-import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.ReadableByteChannel;
+import java.io.InputStream;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
-@NullMarked
-public final class SystemFontFace extends FontFace {
+public class SystemFontFace extends FontFace {
     private final Path path;
 
     public SystemFontFace(FontInfo info, Path path) {
@@ -19,8 +15,14 @@ public final class SystemFontFace extends FontFace {
     }
 
     @Override
-    public ReadableByteChannel byteChannelForRead() throws IOException {
-        return FileChannel.open(this.path, StandardOpenOption.READ);
+    public InputStream toStream() {
+        if (!path.toFile().exists()) {
+            throw new RuntimeException("Tried to load font that no longer exists.");
+        }
+
+        InputStream in = FontUtils.stream(path.toFile());
+        if (in == null) throw new RuntimeException("Failed to load font from " + path + ".");
+        return in;
     }
 
     @Override

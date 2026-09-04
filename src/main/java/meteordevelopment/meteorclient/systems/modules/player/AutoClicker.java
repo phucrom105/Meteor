@@ -6,7 +6,10 @@
 package meteordevelopment.meteorclient.systems.modules.player;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
@@ -14,13 +17,6 @@ import meteordevelopment.orbit.EventHandler;
 
 public class AutoClicker extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-
-    private final Setting<Boolean> inScreens = sgGeneral.add(new BoolSetting.Builder()
-        .name("while-in-screens")
-        .description("Whether to click while a screen is open.")
-        .defaultValue(true)
-        .build()
-    );
 
     private final Setting<Mode> leftClickMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode-left")
@@ -78,8 +74,6 @@ public class AutoClicker extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!inScreens.get() && mc.currentScreen != null) return;
-
         switch (leftClickMode.get()) {
             case Disabled -> {}
             case Hold -> mc.options.attackKey.setPressed(true);
@@ -91,7 +85,6 @@ public class AutoClicker extends Module {
                 }
             }
         }
-
         switch (rightClickMode.get()) {
             case Disabled -> {}
             case Hold -> mc.options.useKey.setPressed(true);

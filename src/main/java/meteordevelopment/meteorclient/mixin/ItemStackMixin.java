@@ -10,8 +10,11 @@ import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.entity.player.FinishUsingItemEvent;
 import meteordevelopment.meteorclient.events.entity.player.StoppedUsingItemEvent;
 import meteordevelopment.meteorclient.events.game.ItemStackTooltipEvent;
+import meteordevelopment.meteorclient.events.game.SectionVisibleEvent;
 import meteordevelopment.meteorclient.utils.Utils;
+import net.minecraft.client.item.TooltipContext;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.text.Text;
 import net.minecraft.world.World;
@@ -28,10 +31,10 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 @Mixin(ItemStack.class)
 public abstract class ItemStackMixin {
     @ModifyReturnValue(method = "getTooltip", at = @At("RETURN"))
-    private List<Text> onGetTooltip(List<Text> original) {
+    private List<Text> onGetTooltip(List<Text> original, PlayerEntity player, TooltipContext context) {
         if (Utils.canUpdate()) {
-            ItemStackTooltipEvent event = MeteorClient.EVENT_BUS.post(new ItemStackTooltipEvent((ItemStack) (Object) this, original));
-            return event.list();
+            ItemStackTooltipEvent event = MeteorClient.EVENT_BUS.post(ItemStackTooltipEvent.get((ItemStack) (Object) this, original));
+            return event.list;
         }
 
         return original;
@@ -49,5 +52,11 @@ public abstract class ItemStackMixin {
         if (user == mc.player) {
             MeteorClient.EVENT_BUS.post(StoppedUsingItemEvent.get((ItemStack) (Object) this));
         }
+    }
+
+    @ModifyReturnValue(method = "isSectionVisible", at = @At("RETURN"))
+    private static boolean onSectionVisible(boolean original, int flags, ItemStack.TooltipSection tooltipSection) {
+        SectionVisibleEvent event = MeteorClient.EVENT_BUS.post(SectionVisibleEvent.get(tooltipSection, original));
+        return event.visible;
     }
 }

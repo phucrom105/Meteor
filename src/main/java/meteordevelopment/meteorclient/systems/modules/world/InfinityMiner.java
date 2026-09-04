@@ -26,8 +26,8 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.PickaxeItem;
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket;
-import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
@@ -158,7 +158,6 @@ public class InfinityMiner extends Module {
             if (!needsRepair()) {
                 warning("Finished repairing, going back to mining.");
                 repairing = false;
-                baritoneSettings.mineScanDroppedItems.value = true;
                 mineTargetBlocks();
                 return;
             }
@@ -169,7 +168,6 @@ public class InfinityMiner extends Module {
             if (needsRepair()) {
                 warning("Pickaxe needs repair, beginning repair process");
                 repairing = true;
-                baritoneSettings.mineScanDroppedItems.value = false;
                 mineRepairBlocks();
                 return;
             }
@@ -185,12 +183,12 @@ public class InfinityMiner extends Module {
     }
 
     private boolean findPickaxe() {
-        Predicate<ItemStack> pickaxePredicate = (stack -> stack.isIn(ItemTags.PICKAXES)
-            && Utils.hasEnchantment(stack, Enchantments.MENDING)
-            && !Utils.hasEnchantment(stack, Enchantments.SILK_TOUCH));
+        Predicate<ItemStack> pickaxePredicate = (stack -> stack.getItem() instanceof PickaxeItem
+            && Utils.hasEnchantments(stack, Enchantments.MENDING)
+            && !Utils.hasEnchantments(stack, Enchantments.SILK_TOUCH));
         FindItemResult bestPick = InvUtils.findInHotbar(pickaxePredicate);
 
-        if (bestPick.isOffhand()) InvUtils.shiftClick().fromOffhand().toHotbar(mc.player.getInventory().getSelectedSlot());
+        if (bestPick.isOffhand()) InvUtils.shiftClick().fromOffhand().toHotbar(mc.player.getInventory().selectedSlot);
         else if (bestPick.isHotbar()) InvUtils.swap(bestPick.slot(), false);
 
         return InvUtils.testInMainHand(pickaxePredicate);

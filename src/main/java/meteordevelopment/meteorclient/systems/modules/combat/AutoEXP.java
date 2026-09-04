@@ -9,15 +9,13 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.type.AttributeModifierSlot;
+import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.enchantment.Enchantments;
-import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.util.Hand;
@@ -36,13 +34,6 @@ public class AutoEXP extends Module {
         .name("replenish")
         .description("Automatically replenishes exp into a selected hotbar slot.")
         .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> onlyGround = sgGeneral.add(new BoolSetting.Builder()
-        .name("only-on-ground")
-        .description("Only throw when the player is on the ground.")
-        .defaultValue(false)
         .build()
     );
 
@@ -87,16 +78,11 @@ public class AutoEXP extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (onlyGround.get() && !mc.player.isOnGround()) {
-            return;
-        }
-
         if (repairingI == -1) {
             if (mode.get() != Mode.Hands) {
-                for (EquipmentSlot slot : AttributeModifierSlot.ARMOR) {
-                    ItemStack stack = mc.player.getEquippedStack(slot);
-                    if (needsRepair(stack, minThreshold.get())) {
-                        repairingI = SlotUtils.ARMOR_START + slot.getEntitySlotId();
+                for (int i = 0; i < mc.player.getInventory().armor.size(); i++) {
+                    if (needsRepair(mc.player.getInventory().armor.get(i), minThreshold.get())) {
+                        repairingI = SlotUtils.ARMOR_START + i;
                         break;
                     }
                 }
@@ -105,7 +91,7 @@ public class AutoEXP extends Module {
             if (mode.get() != Mode.Armor && repairingI == -1) {
                 for (Hand hand : Hand.values()) {
                     if (needsRepair(mc.player.getStackInHand(hand), minThreshold.get())) {
-                        repairingI = hand == Hand.MAIN_HAND ? mc.player.getInventory().getSelectedSlot() : SlotUtils.OFFHAND;
+                        repairingI = hand == Hand.MAIN_HAND ? mc.player.getInventory().selectedSlot : SlotUtils.OFFHAND;
                         break;
                     }
                 }
@@ -141,7 +127,7 @@ public class AutoEXP extends Module {
     }
 
     private boolean needsRepair(ItemStack itemStack, double threshold) {
-        if (itemStack.isEmpty() || !Utils.hasEnchantments(itemStack, Enchantments.MENDING)) return false;
+        if (itemStack.isEmpty() || EnchantmentHelper.getLevel(Enchantments.MENDING, itemStack) < 1) return false;
         return (itemStack.getMaxDamage() - itemStack.getDamage()) / (double) itemStack.getMaxDamage() * 100 <= threshold;
     }
 

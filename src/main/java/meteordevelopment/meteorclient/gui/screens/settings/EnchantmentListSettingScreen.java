@@ -6,31 +6,26 @@
 package meteordevelopment.meteorclient.gui.screens.settings;
 
 import meteordevelopment.meteorclient.gui.GuiTheme;
-import meteordevelopment.meteorclient.gui.screens.settings.base.DynamicRegistryListSettingScreen;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.utils.misc.Names;
 import net.minecraft.enchantment.Enchantment;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.Registries;
 
-import java.util.Set;
+import java.util.List;
 
-public class EnchantmentListSettingScreen extends DynamicRegistryListSettingScreen<Enchantment> {
-    public EnchantmentListSettingScreen(GuiTheme theme, Setting<Set<RegistryKey<Enchantment>>> setting) {
-        super(theme, "Select Enchantments", setting, setting.get(), RegistryKeys.ENCHANTMENT);
+public class EnchantmentListSettingScreen extends LeftRightListSettingScreen<Enchantment> {
+    public EnchantmentListSettingScreen(GuiTheme theme, Setting<List<Enchantment>> setting) {
+        super(theme, "Select Enchantments", setting, setting.get(), Registries.ENCHANTMENT);
     }
 
     @Override
-    protected WWidget getValueWidget(RegistryKey<Enchantment> value) {
-        return theme.label(Names.get(value));
+    protected WWidget getValueWidget(Enchantment value) {
+        return theme.label(getValueName(value));
     }
 
     @Override
-    protected String[] getValueNames(RegistryKey<Enchantment> value) {
-        return new String[]{
-            Names.get(value),
-            value.getValue().toString()
-        };
+    protected String getValueName(Enchantment value) {
+        return Names.get(value);
     }
 }

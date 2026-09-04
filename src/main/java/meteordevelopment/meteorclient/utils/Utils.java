@@ -5,10 +5,12 @@
 
 package meteordevelopment.meteorclient.utils;
 
-import com.mojang.blaze3d.systems.ProjectionType;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.serialization.DataResult;
-import it.unimi.dsi.fastutil.objects.*;
+import com.mojang.blaze3d.systems.VertexSorter;
+import it.unimi.dsi.fastutil.objects.Object2IntArrayMap;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Reference2IntArrayMap;
+import it.unimi.dsi.fastutil.objects.Reference2IntMap;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.tabs.TabScreen;
@@ -18,10 +20,8 @@ import meteordevelopment.meteorclient.settings.StatusEffectAmplifierMapSetting;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.BetterTooltips;
 import meteordevelopment.meteorclient.systems.modules.world.Timer;
-import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.meteorclient.utils.player.EChestMemory;
 import meteordevelopment.meteorclient.utils.render.PeekScreen;
-import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.world.BlockEntityIterator;
 import meteordevelopment.meteorclient.utils.world.ChunkIterator;
@@ -30,44 +30,40 @@ import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.gui.screen.world.SelectWorldScreen;
-import net.minecraft.client.render.ProjectionMatrix2;
 import net.minecraft.client.resource.ResourceReloadLogger;
-import net.minecraft.component.ComponentMap;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ItemEnchantmentsComponent;
+import net.minecraft.client.resource.language.I18n;
 import net.minecraft.enchantment.Enchantment;
-import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.TypedEntityData;
 import net.minecraft.entity.effect.StatusEffect;
-import net.minecraft.inventory.StackWithSlot;
 import net.minecraft.item.*;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtOps;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.Registries;
 import net.minecraft.util.DyeColor;
-import net.minecraft.util.collection.DefaultedList;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.Chunk;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.Range;
+import org.joml.Matrix4f;
 import org.joml.Vector3d;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.Random;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -79,15 +75,12 @@ public class Utils {
     public static final Color WHITE = new Color(255, 255, 255);
 
     private static final Random random = new Random();
+    public static boolean firstTimeTitleScreen = true;
     public static boolean isReleasingTrident;
     public static boolean rendering3D = true;
     public static double frameTime;
     public static Screen screenToOpen;
-
-    private static final ProjectionMatrix2 matrix = new ProjectionMatrix2("meteor-projection-matrix", -10, 100, true);
-
-    private Utils() {
-    }
+    public static VertexSorter vertexSorter;
 
     @PreInit
     public static void init() {
@@ -105,9 +98,9 @@ public class Utils {
     public static Vec3d getPlayerSpeed() {
         if (mc.player == null) return Vec3d.ZERO;
 
-        double tX = mc.player.getX() - mc.player.lastX;
-        double tY = mc.player.getY() - mc.player.lastY;
-        double tZ = mc.player.getZ() - mc.player.lastZ;
+        double tX = mc.player.getX() - mc.player.prevX;
+        double tY = mc.player.getY() - mc.player.prevY;
+        double tZ = mc.player.getZ() - mc.player.prevZ;
 
         Timer timer = Modules.get().get(Timer.class);
         if (timer.isActive()) {
@@ -145,62 +138,32 @@ public class Utils {
         return BlockEntityIterator::new;
     }
 
-    public static void getEnchantments(ItemStack itemStack, Object2IntMap<RegistryEntry<Enchantment>> enchantments) {
+    public static void getEnchantments(ItemStack itemStack, Object2IntMap<Enchantment> enchantments) {
         enchantments.clear();
 
         if (!itemStack.isEmpty()) {
-            Set<Object2IntMap.Entry<RegistryEntry<Enchantment>>> itemEnchantments = itemStack.getItem() == Items.ENCHANTED_BOOK
-                ? itemStack.getOrDefault(DataComponentTypes.STORED_ENCHANTMENTS, ItemEnchantmentsComponent.DEFAULT).getEnchantmentEntries()
-                : itemStack.getEnchantments().getEnchantmentEntries();
+            NbtList listTag = itemStack.getItem() == Items.ENCHANTED_BOOK ? EnchantedBookItem.getEnchantmentNbt(itemStack) : itemStack.getEnchantments();
 
-            for (Object2IntMap.Entry<RegistryEntry<Enchantment>> entry : itemEnchantments) {
-                enchantments.put(entry.getKey(), entry.getIntValue());
+            for (int i = 0; i < listTag.size(); ++i) {
+                NbtCompound tag = listTag.getCompound(i);
+
+                Registries.ENCHANTMENT.getOrEmpty(Identifier.tryParse(tag.getString("id"))).ifPresent((enchantment) -> enchantments.put(enchantment, tag.getInt("lvl")));
             }
         }
     }
 
-    public static int getEnchantmentLevel(ItemStack itemStack, RegistryKey<Enchantment> enchantment) {
-        if (itemStack.isEmpty()) return 0;
-        Object2IntMap<RegistryEntry<Enchantment>> itemEnchantments = new Object2IntArrayMap<>();
-        getEnchantments(itemStack, itemEnchantments);
-        return getEnchantmentLevel(itemEnchantments, enchantment);
-    }
-
-    public static int getEnchantmentLevel(Object2IntMap<RegistryEntry<Enchantment>> itemEnchantments, RegistryKey<Enchantment> enchantment) {
-        for (Object2IntMap.Entry<RegistryEntry<Enchantment>> entry : Object2IntMaps.fastIterable(itemEnchantments)) {
-            if (entry.getKey().matchesKey(enchantment)) return entry.getIntValue();
-        }
-        return 0;
-    }
-
-    @SafeVarargs
-    public static boolean hasEnchantments(ItemStack itemStack, RegistryKey<Enchantment>... enchantments) {
+    public static boolean hasEnchantments(ItemStack itemStack, Enchantment... enchantments) {
         if (itemStack.isEmpty()) return false;
-        Object2IntMap<RegistryEntry<Enchantment>> itemEnchantments = new Object2IntArrayMap<>();
-        getEnchantments(itemStack, itemEnchantments);
 
-        for (RegistryKey<Enchantment> enchantment : enchantments) {
-            if (!hasEnchantment(itemEnchantments, enchantment)) return false;
-        }
+        Object2IntMap<Enchantment> itemEnchantments = new Object2IntArrayMap<>();
+        getEnchantments(itemStack, itemEnchantments);
+        for (Enchantment enchantment : enchantments) if (!itemEnchantments.containsKey(enchantment)) return false;
+
         return true;
     }
 
-    public static boolean hasEnchantment(ItemStack itemStack, RegistryKey<Enchantment> enchantmentKey) {
-        if (itemStack.isEmpty()) return false;
-        Object2IntMap<RegistryEntry<Enchantment>> itemEnchantments = new Object2IntArrayMap<>();
-        getEnchantments(itemStack, itemEnchantments);
-        return hasEnchantment(itemEnchantments, enchantmentKey);
-    }
-
-    private static boolean hasEnchantment(Object2IntMap<RegistryEntry<Enchantment>> itemEnchantments, RegistryKey<Enchantment> enchantmentKey) {
-        for (RegistryEntry<Enchantment> enchantment : itemEnchantments.keySet()) {
-            if (enchantment.matchesKey(enchantmentKey)) return true;
-        }
-        return false;
-    }
-
     public static int getRenderDistance() {
-        return Math.max(mc.options.getViewDistance().getValue(), ((ClientPlayNetworkHandlerAccessor) mc.getNetworkHandler()).meteor$getChunkLoadDistance());
+        return Math.max(mc.options.getViewDistance().getValue(), ((ClientPlayNetworkHandlerAccessor) mc.getNetworkHandler()).getChunkLoadDistance());
     }
 
     public static int getWindowWidth() {
@@ -212,22 +175,13 @@ public class Utils {
     }
 
     public static void unscaledProjection() {
-        float width = mc.getWindow().getFramebufferWidth();
-        float height = mc.getWindow().getFramebufferHeight();
-
-        RenderSystem.setProjectionMatrix(matrix.set(width, height), ProjectionType.ORTHOGRAPHIC);
-        RenderUtils.projection.set(((ProjectionMatrix2Accessor) matrix).meteor$callGetMatrix(width, height));
-
+        vertexSorter = RenderSystem.getVertexSorting();
+        RenderSystem.setProjectionMatrix(new Matrix4f().setOrtho(0, mc.getWindow().getFramebufferWidth(), mc.getWindow().getFramebufferHeight(), 0, 1000, 21000), VertexSorter.BY_Z);
         rendering3D = false;
     }
 
     public static void scaledProjection() {
-        float width = (float) (mc.getWindow().getFramebufferWidth() / mc.getWindow().getScaleFactor());
-        float height = (float) (mc.getWindow().getFramebufferHeight() / mc.getWindow().getScaleFactor());
-
-        RenderSystem.setProjectionMatrix(matrix.set(width, height), ProjectionType.PERSPECTIVE);
-        RenderUtils.projection.set(((ProjectionMatrix2Accessor) matrix).meteor$callGetMatrix(width, height));
-
+        RenderSystem.setProjectionMatrix(new Matrix4f().setOrtho(0, (float) (mc.getWindow().getFramebufferWidth() / mc.getWindow().getScaleFactor()), (float) (mc.getWindow().getFramebufferHeight() / mc.getWindow().getScaleFactor()), 0, 1000, 21000), vertexSorter);
         rendering3D = true;
     }
 
@@ -256,35 +210,17 @@ public class Utils {
         }
 
         Arrays.fill(items, ItemStack.EMPTY);
-        ComponentMap components = itemStack.getComponents();
+        NbtCompound nbt = itemStack.getNbt();
 
-        if (components.contains(DataComponentTypes.CONTAINER)) {
-            ContainerComponentAccessor container = ((ContainerComponentAccessor) (Object) components.get(DataComponentTypes.CONTAINER));
-            DefaultedList<ItemStack> stacks = container.meteor$getStacks();
+        if (nbt != null && nbt.contains("BlockEntityTag")) {
+            NbtCompound nbt2 = nbt.getCompound("BlockEntityTag");
 
-            for (int i = 0; i < stacks.size(); i++) {
-                if (i >= 0 && i < items.length) items[i] = stacks.get(i);
-            }
-        }
-        else if (components.contains(DataComponentTypes.BLOCK_ENTITY_DATA)) {
-            TypedEntityData<BlockEntityType<?>> blockEntityData = components.get(DataComponentTypes.BLOCK_ENTITY_DATA);
-            if (blockEntityData == null) return;
-            NbtList nbt3 = blockEntityData.copyNbtWithoutId().getListOrEmpty("Items");
+            if (nbt2.contains("Items")) {
+                NbtList nbt3 = (NbtList) nbt2.get("Items");
 
-            for (int i = 0; i < nbt3.size(); i++) {
-                Optional<NbtCompound> compound = nbt3.getCompound(i);
-                if (compound.isEmpty()) continue;
-
-                Optional<Byte> slot = compound.get().getByte("Slot"); // Apparently shulker boxes can store more than 27 items, good job Mojang
-                if (slot.isEmpty()) continue;
-
-                // now NPEs when mc.world == null
-                if (slot.get() >= 0 && slot.get() < items.length) {
-                    switch (StackWithSlot.CODEC.parse(mc.player.getRegistryManager().getOps(NbtOps.INSTANCE), compound.get())) {
-                        case DataResult.Success<StackWithSlot> success -> items[slot.get()] = success.value().stack();
-                        case DataResult.Error<StackWithSlot> ignored -> items[slot.get()] = ItemStack.EMPTY;
-                        default -> throw new MatchException(null, null);
-                    }
+                for (int i = 0; i < nbt3.size(); i++) {
+                    int slot = nbt3.getCompound(i).getByte("Slot"); // Apparently shulker boxes can store more than 27 items, good job Mojang
+                    if (slot >= 0 && slot < items.length) items[slot] = ItemStack.fromNbt(nbt3.getCompound(i));
                 }
             }
         }
@@ -294,33 +230,27 @@ public class Utils {
         if (shulkerItem.getItem() instanceof BlockItem blockItem) {
             Block block = blockItem.getBlock();
             if (block == Blocks.ENDER_CHEST) return BetterTooltips.ECHEST_COLOR;
-
             if (block instanceof ShulkerBoxBlock shulkerBlock) {
                 DyeColor dye = shulkerBlock.getColor();
                 if (dye == null) return WHITE;
-
-                final int color = dye.getEntityColor();
-                return new Color((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, 255);
+                final float[] colors = dye.getColorComponents();
+                return new Color(colors[0], colors[1], colors[2], 1f);
             }
         }
-
         return WHITE;
     }
 
     public static boolean hasItems(ItemStack itemStack) {
-        ContainerComponentAccessor container = ((ContainerComponentAccessor) (Object) itemStack.get(DataComponentTypes.CONTAINER));
-        if (container != null && !container.meteor$getStacks().isEmpty()) return true;
-
-        TypedEntityData<BlockEntityType<?>> blockEntityData = itemStack.get(DataComponentTypes.BLOCK_ENTITY_DATA);
-        return blockEntityData != null && blockEntityData.contains("Items");
+        NbtCompound compoundTag = itemStack.getSubNbt("BlockEntityTag");
+        return compoundTag != null && compoundTag.contains("Items", 9);
     }
 
     public static Reference2IntMap<StatusEffect> createStatusEffectMap() {
         return new Reference2IntArrayMap<>(StatusEffectAmplifierMapSetting.EMPTY_STATUS_EFFECT_MAP);
     }
 
-    public static String getEnchantSimpleName(RegistryEntry<Enchantment> enchantment, int length) {
-        String name = Names.get(enchantment);
+    public static String getEnchantSimpleName(Enchantment enchantment, int length) {
+        String name = I18n.translate(enchantment.getTranslationKey());
         return name.length() > length ? name.substring(0, length) : name;
     }
 
@@ -368,9 +298,9 @@ public class Utils {
         // Find best route
         for (int i = 1; i <= textLength; i++) {
             for (int j = 1; j <= filterLength; j++) {
-                int sCost = d[i - 1][j - 1] + (from.charAt(i - 1) == to.charAt(j - 1) ? 0 : subCost);
-                int dCost = d[i - 1][j] + delCost;
-                int iCost = d[i][j - 1] + insCost;
+                int sCost = d[i-1][j-1] + (from.charAt(i-1) == to.charAt(j-1) ? 0 : subCost);
+                int dCost = d[i-1][j] + delCost;
+                int iCost = d[i][j-1] + insCost;
                 d[i][j] = Math.min(Math.min(dCost, iCost), sCost);
             }
         }
@@ -396,16 +326,12 @@ public class Utils {
         return FILE_NAME_INVALID_CHARS_PATTERN.matcher(getWorldName()).replaceAll("_");
     }
 
-    /**
-     * Use {@link Utils#getFileWorldName()} if you are using the world name as a file/directory name
-     */
     public static String getWorldName() {
         // Singleplayer
         if (mc.isInSingleplayer()) {
             if (mc.world == null) return "";
-            if (mc.getServer() == null) return "FAILED_BECAUSE_LEFT_WORLD";
 
-            File folder = ((MinecraftServerAccessor) mc.getServer()).meteor$getSession().getWorldDirectory(mc.world.getRegistryKey()).toFile();
+            File folder = ((MinecraftServerAccessor) mc.getServer()).getSession().getWorldDirectory(mc.world.getRegistryKey()).toFile();
             if (folder.toPath().relativize(mc.runDirectory.toPath()).getNameCount() != 2) {
                 folder = folder.getParentFile();
             }
@@ -463,7 +389,6 @@ public class Utils {
             case GLFW_KEY_ENTER -> "Enter";
             case GLFW_KEY_KP_ENTER -> "Numpad Enter";
             case GLFW_KEY_NUM_LOCK -> "Num Lock";
-            case GLFW_KEY_SCROLL_LOCK -> "Scroll Lock";
             case GLFW_KEY_SPACE -> "Space";
             case GLFW_KEY_F1 -> "F1";
             case GLFW_KEY_F2 -> "F2";
@@ -509,13 +434,19 @@ public class Utils {
 
     public static byte[] readBytes(InputStream in) {
         try {
-            return in.readAllBytes();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+            byte[] buffer = new byte[256];
+            int read;
+            while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+
+            in.close();
+            return out.toByteArray();
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error reading from stream.", e);
-            return new byte[0];
-        } finally {
-            IOUtils.closeQuietly(in);
+            e.printStackTrace();
         }
+
+        return new byte[0];
     }
 
     public static boolean canUpdate() {
@@ -541,21 +472,13 @@ public class Utils {
     }
 
     public static void leftClick() {
-        // check if a screen is open
-        // see net.minecraft.client.Mouse.lockCursor
-        // see net.minecraft.client.MinecraftClient.tick
-        int attackCooldown = ((MinecraftClientAccessor) mc).meteor$getAttackCooldown();
-        if (attackCooldown == 10000) {
-            ((MinecraftClientAccessor) mc).meteor$setAttackCooldown(0);
-        }
-
         mc.options.attackKey.setPressed(true);
-        ((MinecraftClientAccessor) mc).meteor$leftClick();
+        ((MinecraftClientAccessor) mc).leftClick();
         mc.options.attackKey.setPressed(false);
     }
 
     public static void rightClick() {
-        ((IMinecraftClient) mc).meteor$rightClick();
+        ((IMinecraftClient) mc).rightClick();
     }
 
     public static boolean isShulker(Item item) {
@@ -566,19 +489,60 @@ public class Utils {
         return item instanceof ExperienceBottleItem || item instanceof BowItem || item instanceof CrossbowItem || item instanceof SnowballItem || item instanceof EggItem || item instanceof EnderPearlItem || item instanceof SplashPotionItem || item instanceof LingeringPotionItem || item instanceof FishingRodItem || item instanceof TridentItem;
     }
 
-    public static void addEnchantment(ItemStack itemStack, RegistryEntry<Enchantment> enchantment, int level) {
-        ItemEnchantmentsComponent.Builder b = new ItemEnchantmentsComponent.Builder(EnchantmentHelper.getEnchantments(itemStack));
-        b.add(enchantment, level);
+    public static void addEnchantment(ItemStack itemStack, Enchantment enchantment, int level) {
+        NbtCompound tag = itemStack.getOrCreateNbt();
+        NbtList listTag;
 
-        EnchantmentHelper.set(itemStack, b.build());
+        // Get list tag
+        if (!tag.contains("Enchantments", 9)) {
+            listTag = new NbtList();
+            tag.put("Enchantments", listTag);
+        } else {
+            listTag = tag.getList("Enchantments", 10);
+        }
+
+        // Check if item already has the enchantment and modify the level
+        String enchId = Registries.ENCHANTMENT.getId(enchantment).toString();
+
+        for (NbtElement _t : listTag) {
+            NbtCompound t = (NbtCompound) _t;
+
+            if (t.getString("id").equals(enchId)) {
+                t.putShort("lvl", (short) level);
+                return;
+            }
+        }
+
+        // Add the enchantment if it doesn't already have it
+        NbtCompound enchTag = new NbtCompound();
+        enchTag.putString("id", enchId);
+        enchTag.putShort("lvl", (short) level);
+
+        listTag.add(enchTag);
     }
 
     public static void clearEnchantments(ItemStack itemStack) {
-        EnchantmentHelper.apply(itemStack, components -> components.remove(a -> true));
+        NbtCompound nbt = itemStack.getNbt();
+        if (nbt != null) nbt.remove("Enchantments");
     }
 
     public static void removeEnchantment(ItemStack itemStack, Enchantment enchantment) {
-        EnchantmentHelper.apply(itemStack, components -> components.remove(enchantment1 -> enchantment1.value().equals(enchantment)));
+        NbtCompound nbt = itemStack.getNbt();
+        if (nbt == null) return;
+
+        if (!nbt.contains("Enchantments", 9)) return;
+        NbtList list = nbt.getList("Enchantments", 10);
+
+        String enchId = Registries.ENCHANTMENT.getId(enchantment).toString();
+
+        for (Iterator<NbtElement> it = list.iterator(); it.hasNext();) {
+            NbtCompound ench = (NbtCompound) it.next();
+
+            if (ench.getString("id").equals(enchId)) {
+                it.remove();
+                break;
+            }
+        }
     }
 
     public static Color lerp(Color first, Color second, @Range(from = 0, to = 1) float v) {
@@ -590,8 +554,8 @@ public class Utils {
     }
 
     public static boolean isLoading() {
-        ResourceReloadLogger.ReloadState state = ((ResourceReloadLoggerAccessor) ((MinecraftClientAccessor) mc).meteor$getResourceReloadLogger()).meteor$getReloadState();
-        return state == null || !((ReloadStateAccessor) state).meteor$isFinished();
+        ResourceReloadLogger.ReloadState state = ((ResourceReloadLoggerAccessor) ((MinecraftClientAccessor) mc).getResourceReloadLogger()).getReloadState();
+        return state == null || !((ReloadStateAccessor) state).isFinished();
     }
 
     public static int parsePort(String full) {
@@ -601,7 +565,8 @@ public class Utils {
 
         try {
             port = Integer.parseInt(full.substring(full.lastIndexOf(':') + 1, full.length() - 1));
-        } catch (NumberFormatException ignored) {
+        }
+        catch (NumberFormatException ignored) {
             port = -1;
         }
 
@@ -653,6 +618,6 @@ public class Utils {
 
     public static boolean ipFilter(String text, char character) {
         if (text.contains(":") && character == ':') return false;
-        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '.' || character == '-' || character == ':';
+        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '.';
     }
 }

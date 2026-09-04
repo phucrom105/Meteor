@@ -20,8 +20,6 @@ import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import net.minecraft.client.gui.screen.Screen;
 
-import static meteordevelopment.meteorclient.MeteorClient.mc;
-
 public class FriendsTab extends Tab {
     public FriendsTab() {
         super("Friends");
@@ -62,15 +60,11 @@ public class FriendsTab extends Tab {
 
                 if (Friends.get().add(friend)) {
                     nameW.set("");
-                    initTable(table);
-                    nameW.setFocused(true);
+                    reload();
 
                     MeteorExecutor.execute(() -> {
                         friend.updateInfo();
-                        mc.execute(() -> {
-                            initTable(table);
-                            nameW.setFocused(true);
-                        });
+                        reload();
                     });
                 }
             };
@@ -86,6 +80,7 @@ public class FriendsTab extends Tab {
                 MeteorExecutor.execute(() -> {
                     if (friend.headTextureNeedsUpdate()) {
                         friend.updateInfo();
+                        reload();
                     }
                 })
             );
@@ -97,7 +92,7 @@ public class FriendsTab extends Tab {
                 WMinus remove = table.add(theme.minus()).expandCellX().right().widget();
                 remove.action = () -> {
                     Friends.get().remove(friend);
-                    initTable(table);
+                    reload();
                 };
 
                 table.row();

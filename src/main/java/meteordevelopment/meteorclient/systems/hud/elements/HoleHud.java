@@ -26,7 +26,6 @@ public class HoleHud extends HudElement {
     public static final HudElementInfo<HoleHud> INFO = new HudElementInfo<>(Hud.GROUP, "hole", "Displays information about the hole you are standing in.", HoleHud::new);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgScale = settings.createGroup("Scale");
     private final SettingGroup sgBackground = settings.createGroup("Background");
 
     // General
@@ -38,37 +37,34 @@ public class HoleHud extends HudElement {
         .build()
     );
 
-    // Scale
-
-    public final Setting<Boolean> customScale = sgScale.add(new BoolSetting.Builder()
-        .name("custom-scale")
-        .description("Applies a custom scale to this hud element.")
-        .defaultValue(false)
-        .onChanged(aBoolean -> calculateSize())
+    private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
+        .name("scale")
+        .description("The scale.")
+        .defaultValue(2)
+        .onChanged(aDouble -> calculateSize())
+        .min(1)
+        .sliderRange(1, 5)
         .build()
     );
 
-    public final Setting<Double> scale = sgScale.add(new DoubleSetting.Builder()
-        .name("scale")
-        .description("Custom scale.")
-        .visible(customScale::get)
-        .defaultValue(2)
-        .onChanged(aDouble -> calculateSize())
-        .min(0.5)
-        .sliderRange(0.5, 3)
+    private final Setting<Integer> border = sgGeneral.add(new IntSetting.Builder()
+        .name("border")
+        .description("How much space to add around the element.")
+        .defaultValue(0)
+        .onChanged(integer -> calculateSize())
         .build()
     );
 
     // Background
 
-    public final Setting<Boolean> background = sgBackground.add(new BoolSetting.Builder()
+    private final Setting<Boolean> background = sgBackground.add(new BoolSetting.Builder()
         .name("background")
         .description("Displays background.")
         .defaultValue(false)
         .build()
     );
 
-    public final Setting<SettingColor> backgroundColor = sgBackground.add(new ColorSetting.Builder()
+    private final Setting<SettingColor> backgroundColor = sgBackground.add(new ColorSetting.Builder()
         .name("background-color")
         .description("Color used for the background.")
         .visible(background::get)
@@ -85,17 +81,25 @@ public class HoleHud extends HudElement {
         calculateSize();
     }
 
+    @Override
+    public void setSize(double width, double height) {
+        super.setSize(width + border.get() * 2, height + border.get() * 2);
+    }
+
     private void calculateSize() {
-        setSize(16 * 3 * getScale(), 16 * 3 * getScale());
+        setSize(16 * 3 * scale.get(), 16 * 3 * scale.get());
     }
 
     @Override
     public void render(HudRenderer renderer) {
         renderer.post(() -> {
-            drawBlock(renderer, get(Facing.Left), x, y + 16 * getScale()); // Left
-            drawBlock(renderer, get(Facing.Front), x + 16 * getScale(), y); // Front
-            drawBlock(renderer, get(Facing.Right), x + 32 * getScale(), y + 16 * getScale()); // Right
-            drawBlock(renderer, get(Facing.Back), x + 16 * getScale(), y + 32 * getScale()); // Back
+            double x = this.x + border.get();
+            double y = this.y + border.get();
+
+            drawBlock(renderer, get(Facing.Left), x, y + 16 * scale.get()); // Left
+            drawBlock(renderer, get(Facing.Front), x + 16 * scale.get(), y); // Front
+            drawBlock(renderer, get(Facing.Right), x + 32 * scale.get(), y + 16 * scale.get()); // Right
+            drawBlock(renderer, get(Facing.Back), x + 16 * scale.get(), y + 32 * scale.get()); // Back
         });
 
         if (background.get()) {
@@ -105,18 +109,18 @@ public class HoleHud extends HudElement {
 
     private Direction get(Facing dir) {
         if (isInEditor()) return Direction.DOWN;
-        return Direction.fromHorizontalDegrees(MathHelper.wrapDegrees(mc.player.getYaw() + dir.offset));
+        return Direction.fromRotation(MathHelper.wrapDegrees(mc.player.getYaw() + dir.offset));
     }
 
     private void drawBlock(HudRenderer renderer, Direction dir, double x, double y) {
         Block block = dir == Direction.DOWN ? Blocks.OBSIDIAN : mc.world.getBlockState(mc.player.getBlockPos().offset(dir)).getBlock();
         if (!safe.get().contains(block)) return;
 
-        renderer.item(block.asItem().getDefaultStack(), (int) x, (int) y, getScale(), false);
+        renderer.item(block.asItem().getDefaultStack(), (int) x, (int) y, scale.get().floatValue(), false);
 
         if (dir == Direction.DOWN) return;
 
-        ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos().values().forEach(info -> {
+        ((WorldRendererAccessor) mc.worldRenderer).getBlockBreakingInfos().values().forEach(info -> {
             if (info.getPos().equals(mc.player.getBlockPos().offset(dir))) {
                 renderBreaking(renderer, x, y, info.getStage() / 9f);
             }
@@ -124,15 +128,11 @@ public class HoleHud extends HudElement {
     }
 
     private void renderBreaking(HudRenderer renderer, double x, double y, double percent) {
-        renderer.quad(x, y, (16 * percent) * getScale(), 16 * getScale(), BG_COLOR);
-        renderer.quad(x, y, 16 * getScale(), 1 * getScale(), OL_COLOR);
-        renderer.quad(x, y + 15 * getScale(), 16 * getScale(), 1 * getScale(), OL_COLOR);
-        renderer.quad(x, y, 1 * getScale(), 16 * getScale(), OL_COLOR);
-        renderer.quad(x + 15 * getScale(), y, 1 * getScale(), 16 * getScale(), OL_COLOR);
-    }
-
-    private float getScale() {
-        return customScale.get() ? scale.get().floatValue() : scale.getDefaultValue().floatValue();
+        renderer.quad(x, y, (16 * percent) * scale.get(), 16 * scale.get(), BG_COLOR);
+        renderer.quad(x, y, 16 * scale.get(), 1 * scale.get(), OL_COLOR);
+        renderer.quad(x, y + 15 * scale.get(), 16 * scale.get(), 1 * scale.get(), OL_COLOR);
+        renderer.quad(x, y, 1 * scale.get(), 16 * scale.get(), OL_COLOR);
+        renderer.quad(x + 15 * scale.get(), y, 1 * scale.get(), 16 * scale.get(), OL_COLOR);
     }
 
     private enum Facing {

@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.commands.commands;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.suggestion.Suggestion;
 import com.mojang.brigadier.suggestion.Suggestions;
+import joptsimple.internal.Strings;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -19,32 +20,31 @@ import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.command.CommandRegistryAccess;
 import net.minecraft.command.CommandSource;
-import net.minecraft.command.DefaultPermissions;
-import net.minecraft.command.permission.PermissionPredicate;
 import net.minecraft.network.packet.c2s.play.RequestCommandCompletionsC2SPacket;
 import net.minecraft.network.packet.s2c.play.CommandSuggestionsS2CPacket;
 import net.minecraft.network.packet.s2c.play.CommandTreeS2CPacket;
+import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.integrated.IntegratedServer;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.HoverEvent;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.minecraft.world.LocalDifficulty;
-import net.minecraft.world.attribute.EnvironmentAttributes;
-import net.minecraft.world.dimension.DimensionType;
-import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.StringUtils;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
-import java.util.Set;
+
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class ServerCommand extends Command {
-    private static final Set<String> ANTICHEAT_LIST = Set.of("nocheatplus", "negativity", "warden", "horizon", "illegalstack", "coreprotect", "exploitsx", "vulcan", "abc", "spartan", "kauri", "anticheatreloaded", "witherac", "godseye", "matrix", "wraith", "antixrayheuristics", "grimac", "themis", "foxaddition", "guardianac", "ggintegrity", "lightanticheat", "anarchyexploitfixes", "polar");
-    private static final Set<String> VERSION_ALIASES = Set.of("version", "ver", "about", "bukkit:version", "bukkit:ver", "bukkit:about"); // aliases for bukkit:version
+    private static final List<String> ANTICHEAT_LIST = Arrays.asList("nocheatplus", "negativity", "warden", "horizon", "illegalstack", "coreprotect", "exploitsx", "vulcan", "abc", "spartan", "kauri", "anticheatreloaded", "witherac", "godseye", "matrix", "wraith", "antixrayheuristics", "grimac");
+    private static final String[] VERSION_ALIASES = {"version", "ver", "about", "bukkit:version", "bukkit:ver", "bukkit:about"}; // aliases for bukkit:version
     private String alias;
     private int ticks = 0;
     private boolean tick = false;
@@ -120,20 +120,38 @@ public class ServerCommand extends Command {
         if (ipv4.isEmpty()) {
             ipText = Text.literal(Formatting.GRAY + server.address);
             ipText.setStyle(ipText.getStyle()
-                .withClickEvent(new ClickEvent.CopyToClipboard(server.address))
-                .withHoverEvent(new HoverEvent.ShowText(Text.literal("Copy to clipboard")))
+                .withClickEvent(new ClickEvent(
+                    ClickEvent.Action.COPY_TO_CLIPBOARD,
+                    server.address
+                ))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    Text.literal("Copy to clipboard")
+                ))
             );
         }
         else {
             ipText = Text.literal(Formatting.GRAY + server.address);
             ipText.setStyle(ipText.getStyle()
-                .withClickEvent(new ClickEvent.CopyToClipboard(server.address))
-                .withHoverEvent(new HoverEvent.ShowText(Text.literal("Copy to clipboard")))
+                .withClickEvent(new ClickEvent(
+                    ClickEvent.Action.COPY_TO_CLIPBOARD,
+                    server.address
+                ))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    Text.literal("Copy to clipboard")
+                ))
             );
             MutableText ipv4Text = Text.literal(String.format("%s (%s)", Formatting.GRAY, ipv4));
             ipv4Text.setStyle(ipText.getStyle()
-                .withClickEvent(new ClickEvent.CopyToClipboard(ipv4))
-                .withHoverEvent(new HoverEvent.ShowText(Text.literal("Copy to clipboard")))
+                .withClickEvent(new ClickEvent(
+                    ClickEvent.Action.COPY_TO_CLIPBOARD,
+                    ipv4
+                ))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    Text.literal("Copy to clipboard")
+                ))
             );
             ipText.append(ipv4Text);
         }
@@ -143,31 +161,34 @@ public class ServerCommand extends Command {
         );
 
         info("Port: %d", ServerAddress.parse(server.address).getPort());
+
         info("Type: %s", mc.getNetworkHandler().getBrand() != null ? mc.getNetworkHandler().getBrand() : "unknown");
+
         info("Motd: %s", server.label != null ? server.label.getString() : "unknown");
+
         info("Version: %s", server.version.getString());
+
         info("Protocol version: %d", server.protocolVersion);
-        info("Difficulty: %s (Local: %.2f)",
-            mc.world.getDifficulty().getTranslatableName().getString(),
-            new LocalDifficulty(
-                mc.world.getDifficulty(),
-                mc.world.getTimeOfDay(),
-                mc.world.getChunk(mc.player.getBlockPos()).getInhabitedTime(),
-                DimensionType.MOON_SIZES[mc.world.getEnvironmentAttributes().getAttributeValue(EnvironmentAttributes.MOON_PHASE_VISUAL, mc.player.getBlockPos()).getIndex()] // lol
-            ).getLocalDifficulty()
-        );
+
+        info("Difficulty: %s (Local: %.2f)", mc.world.getDifficulty().getTranslatableName().getString(), mc.world.getLocalDifficulty(mc.player.getBlockPos()).getLocalDifficulty());
+
         info("Day: %d", mc.world.getTimeOfDay() / 24000L);
+
         info("Permission level: %s", formatPerms());
     }
 
     public String formatPerms() {
-        PermissionPredicate permissions = mc.player.getPermissions();
+        int p = 5;
+        while (!mc.player.hasPermissionLevel(p) && p > 0) p--;
 
-        if (permissions.hasPermission(DefaultPermissions.OWNERS)) return "4 (Owner)";
-        else if (permissions.hasPermission(DefaultPermissions.ADMINS)) return "3 (Admin)";
-        else if (permissions.hasPermission(DefaultPermissions.GAMEMASTERS)) return "2 (Gamemaster)";
-        else if (permissions.hasPermission(DefaultPermissions.MODERATORS)) return "1 (Moderator)";
-        else return "0 (No Perms)";
+        return switch (p) {
+            case 0 -> "0 (No Perms)";
+            case 1 -> "1 (No Perms)";
+            case 2 -> "2 (Player Command Access)";
+            case 3 -> "3 (Server Command Access)";
+            case 4 -> "4 (Operator)";
+            default -> p + " (Unknown)";
+        };
     }
 
 
@@ -178,7 +199,7 @@ public class ServerCommand extends Command {
         plugins.replaceAll(this::formatName);
 
         if (!plugins.isEmpty()) {
-            info("Plugins (%d): %s ", plugins.size(), String.join(", ", plugins));
+            info("Plugins (%d): %s ", plugins.size(), Strings.join(plugins.toArray(new String[0]), ", "));
         } else {
             error("No plugins found.");
         }
@@ -207,24 +228,23 @@ public class ServerCommand extends Command {
         // the rationale is that since we should get this packet whenever we log into the server, we can capture it
         // straight away and not need to send a command completion packet for essentially the same results
         if (event.packet instanceof CommandTreeS2CPacket packet) {
-            ClientPlayNetworkHandlerAccessor handler = (ClientPlayNetworkHandlerAccessor) event.connection.getPacketListener();
+            ClientPlayNetworkHandlerAccessor handler = (ClientPlayNetworkHandlerAccessor) event.packetListener;
             commandTreePlugins.clear();
             alias = null;
 
             // This gets the root node of the command tree. From there, all of its children have to be of type
             // LiteralCommandNode, so we don't need to worry about checking or casting and can just grab the name
-            packet.getCommandTree(
-                CommandRegistryAccess.of(handler.meteor$getCombinedDynamicRegistries(), handler.meteor$getEnabledFeatures()),
-                ClientPlayNetworkHandlerAccessor.meteor$getCommandNodeFactory()
-            ).getChildren().forEach(node -> {
+            packet.getCommandTree(CommandRegistryAccess.of((RegistryWrapper.WrapperLookup) handler.getCombinedDynamicRegistries(), handler.getEnabledFeatures())).getChildren().forEach(node -> {
                 String[] split = node.getName().split(":");
                 if (split.length > 1) {
                     if (!commandTreePlugins.contains(split[0])) commandTreePlugins.add(split[0]);
                 }
 
                 // checking if any of the bukkit:version commands are available, which we can also grab plugins from
-                if (alias == null && VERSION_ALIASES.contains(node.getName())) {
-                    alias = node.getName();
+                if (alias == null) {
+                    for (String a : VERSION_ALIASES) {
+                        if (node.getName().equals(a)) alias = a;
+                    }
                 }
             });
 
@@ -236,7 +256,7 @@ public class ServerCommand extends Command {
             if (event.packet instanceof CommandSuggestionsS2CPacket packet) {
                 Suggestions matches = packet.getSuggestions();
 
-                if (matches.isEmpty()) {
+                if (matches == null) {
                     error("An error occurred while trying to find plugins.");
                     return;
                 }
@@ -257,7 +277,7 @@ public class ServerCommand extends Command {
         if (ANTICHEAT_LIST.contains(name.toLowerCase())) {
             return String.format("%s%s(default)", Formatting.RED, name);
         }
-        else if (Strings.CI.contains(name, "exploit") || Strings.CI.contains(name, "cheat") || Strings.CI.contains(name, "illegal")) {
+        else if (StringUtils.containsIgnoreCase(name, "exploit") || StringUtils.containsIgnoreCase(name, "cheat") || StringUtils.containsIgnoreCase(name, "illegal")) {
             return String.format("%s%s(default)", Formatting.RED, name);
         }
 

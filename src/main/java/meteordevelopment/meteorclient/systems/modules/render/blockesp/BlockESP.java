@@ -7,7 +7,6 @@ package meteordevelopment.meteorclient.systems.modules.render.blockesp;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
@@ -17,21 +16,21 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.misc.UnorderedArrayList;
+import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
+import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.RainbowColors;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.dimension.DimensionType;
 
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class BlockESP extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -79,13 +78,12 @@ public class BlockESP extends Module {
     private final BlockPos.Mutable blockPos = new BlockPos.Mutable();
 
     private final Long2ObjectMap<ESPChunk> chunks = new Long2ObjectOpenHashMap<>();
-    private final Set<ESPGroup> groups = new ReferenceOpenHashSet<>();
-    private final ExecutorService workerThread = Executors.newSingleThreadExecutor();
+    private final List<ESPGroup> groups = new UnorderedArrayList<>();
 
-    private DimensionType lastDimension;
+    private Dimension lastDimension;
 
     public BlockESP() {
-        super(Categories.Render, "block-esp", "Renders specified blocks through walls.", "search");
+        super(Categories.Render, "block-esp", "Renders specified blocks through walls.");
 
         RainbowColors.register(this::onTickRainbow);
     }
@@ -101,7 +99,7 @@ public class BlockESP extends Module {
             searchChunk(chunk);
         }
 
-        lastDimension = mc.world.getDimension();
+        lastDimension = PlayerUtils.getDimension();
     }
 
     @Override
@@ -159,7 +157,7 @@ public class BlockESP extends Module {
     }
 
     private void searchChunk(Chunk chunk) {
-        workerThread.submit(() -> {
+        MeteorExecutor.execute(() -> {
             if (!isActive()) return;
             ESPChunk schunk = ESPChunk.searchChunk(chunk, blocks.get());
 
@@ -193,7 +191,7 @@ public class BlockESP extends Module {
         boolean removed = !added && !blocks.get().contains(event.newState.getBlock()) && blocks.get().contains(event.oldState.getBlock());
 
         if (added || removed) {
-            workerThread.submit(() -> {
+            MeteorExecutor.execute(() -> {
                 synchronized (chunks) {
                     ESPChunk chunk = chunks.get(key);
 
@@ -226,9 +224,10 @@ public class BlockESP extends Module {
 
     @EventHandler
     private void onPostTick(TickEvent.Post event) {
-        DimensionType dimension = mc.world.getDimension();
+        Dimension dimension = PlayerUtils.getDimension();
 
         if (lastDimension != dimension) onActivate();
+
         lastDimension = dimension;
     }
 
@@ -239,7 +238,7 @@ public class BlockESP extends Module {
                 ESPChunk chunk = it.next();
 
                 if (chunk.shouldBeDeleted()) {
-                    workerThread.submit(() -> {
+                    MeteorExecutor.execute(() -> {
                         for (ESPBlock block : chunk.blocks.values()) {
                             block.group.remove(block, false);
                             block.loaded = false;
@@ -252,15 +251,13 @@ public class BlockESP extends Module {
             }
 
             if (tracers.get()) {
-                for (ESPGroup group : groups) {
-                    group.render(event);
+                for (Iterator<ESPGroup> it = groups.iterator(); it.hasNext();) {
+                    ESPGroup group = it.next();
+
+                    if (group.blocks.isEmpty()) it.remove();
+                    else group.render(event);
                 }
             }
         }
-    }
-
-    @Override
-    public String getInfoString() {
-        return "%s groups".formatted(groups.size());
     }
 }

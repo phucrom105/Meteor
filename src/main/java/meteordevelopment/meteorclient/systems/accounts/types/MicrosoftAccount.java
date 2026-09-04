@@ -10,46 +10,46 @@ import meteordevelopment.meteorclient.systems.accounts.Account;
 import meteordevelopment.meteorclient.systems.accounts.AccountType;
 import meteordevelopment.meteorclient.systems.accounts.MicrosoftLogin;
 import net.minecraft.client.session.Session;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Optional;
 
 public class MicrosoftAccount extends Account<MicrosoftAccount> {
-    private @Nullable String token;
     public MicrosoftAccount(String refreshToken) {
         super(AccountType.Microsoft, refreshToken);
     }
 
     @Override
     public boolean fetchInfo() {
-        token = auth();
-        return token != null;
+        return auth() != null;
     }
 
     @Override
     public boolean login() {
-        if (token == null) return false;
-
         super.login();
 
-        setSession(new Session(cache.username, UndashedUuid.fromStringLenient(cache.uuid), token, Optional.empty(), Optional.empty()));
+        String token = auth();
+        if (token == null) return false;
+
+        cache.loadHead();
+
+        setSession(new Session(cache.username, UndashedUuid.fromStringLenient(cache.uuid), token, Optional.empty(), Optional.empty(), Session.AccountType.MSA));
         return true;
     }
 
-    private @Nullable String auth() {
+    private String auth() {
         MicrosoftLogin.LoginData data = MicrosoftLogin.login(name);
-        if (data == null || data.newRefreshToken() == null) return null;
+        if (!data.isGood()) return null;
 
-        name = data.newRefreshToken();
-        cache.username = data.username();
-        cache.uuid = data.uuid();
+        name = data.newRefreshToken;
+        cache.username = data.username;
+        cache.uuid = data.uuid;
 
-        return data.mcToken();
+        return data.mcToken;
     }
 
     @Override
     public boolean equals(Object o) {
-        if (!(o instanceof MicrosoftAccount account)) return false;
-        return account.name.equals(this.name);
+        if (!(o instanceof MicrosoftAccount)) return false;
+        return ((MicrosoftAccount) o).name.equals(this.name);
     }
 }

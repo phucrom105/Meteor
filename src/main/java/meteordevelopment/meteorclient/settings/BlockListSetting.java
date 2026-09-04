@@ -73,9 +73,9 @@ public class BlockListSetting extends Setting<List<Block>> {
     protected List<Block> load(NbtCompound tag) {
         get().clear();
 
-        NbtList valueTag = tag.getListOrEmpty("value");
+        NbtList valueTag = tag.getList("value", 8);
         for (NbtElement tagI : valueTag) {
-            Block block = Registries.BLOCK.get(Identifier.of(tagI.asString().orElse("")));
+            Block block = Registries.BLOCK.get(new Identifier(tagI.asString()));
 
             if (filter == null || filter.test(block)) get().add(block);
         }

@@ -16,8 +16,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(SectionedEntityCache.class)
 public interface SectionedEntityCacheAccessor {
     @Accessor("trackedPositions")
-    LongSortedSet meteor$getTrackedPositions();
+    LongSortedSet getTrackedPositions();
 
     @Accessor("trackingSections")
-    <T extends EntityLike> Long2ObjectMap<EntityTrackingSection<T>> meteor$getTrackingSections();
+    <T extends EntityLike> Long2ObjectMap<EntityTrackingSection<T>> getTrackingSections();
 }

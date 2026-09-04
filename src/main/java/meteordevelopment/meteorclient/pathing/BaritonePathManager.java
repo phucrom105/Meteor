@@ -12,6 +12,7 @@ import baritone.api.pathing.goals.GoalXZ;
 import baritone.api.process.IBaritoneProcess;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
+import baritone.api.utils.Rotation;
 import baritone.api.utils.SettingsUtil;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -23,11 +24,15 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.lang.reflect.Field;
 import java.util.function.Predicate;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class BaritonePathManager implements IPathManager {
+    private final VarHandle rotationField;
     private final BaritoneSettings settings;
 
     private GoalDirection directionGoal;
@@ -36,6 +41,23 @@ public class BaritonePathManager implements IPathManager {
     public BaritonePathManager() {
         // Subscribe to event bus
         MeteorClient.EVENT_BUS.subscribe(this);
+
+        // Find rotation field
+        Class<?> klass = BaritoneAPI.getProvider().getPrimaryBaritone().getLookBehavior().getClass();
+        VarHandle rotationField = null;
+
+        for (Field field : klass.getDeclaredFields()) {
+            if (field.getType() == Rotation.class) {
+                try {
+                    rotationField = MethodHandles.lookup().unreflectVarHandle(field);
+                    break;
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+
+        this.rotationField = rotationField;
 
         // Create settings
         settings = new BaritoneSettings();
@@ -97,12 +119,14 @@ public class BaritonePathManager implements IPathManager {
 
     @Override
     public float getTargetYaw() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone().getPlayerContext().playerRotations().getYaw();
+        Rotation rotation = (Rotation) rotationField.get(BaritoneAPI.getProvider().getPrimaryBaritone().getLookBehavior());
+        return rotation == null ? 0 : rotation.getYaw();
     }
 
     @Override
     public float getTargetPitch() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone().getPlayerContext().playerRotations().getPitch();
+        Rotation rotation = (Rotation) rotationField.get(BaritoneAPI.getProvider().getPrimaryBaritone().getLookBehavior());
+        return rotation == null ? 0 : rotation.getPitch();
     }
 
     @Override
@@ -154,17 +178,17 @@ public class BaritonePathManager implements IPathManager {
         }
 
         public void tick() {
-            if (timer <= 0) {
-                timer = 20;
+            if (timer > 20) {
+                timer = 0;
 
-                Vec3d pos = mc.player.getEntityPos();
+                Vec3d pos = mc.player.getPos();
                 float theta = (float) Math.toRadians(yaw);
 
                 x = (int) Math.floor(pos.x - (double) MathHelper.sin(theta) * 100);
                 z = (int) Math.floor(pos.z + (double) MathHelper.cos(theta) * 100);
             }
 
-            timer--;
+            timer++;
         }
 
         public boolean isInGoal(int x, int y, int z) {

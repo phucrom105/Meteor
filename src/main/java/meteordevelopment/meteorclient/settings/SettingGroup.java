@@ -9,7 +9,6 @@ import meteordevelopment.meteorclient.utils.misc.ISerializable;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -34,7 +33,7 @@ public class SettingGroup implements ISerializable<SettingGroup>, Iterable<Setti
         return null;
     }
 
-    public <T extends Setting<?>> T add(T setting) {
+    public <T> Setting<T> add(Setting<T> setting) {
         settings.add(setting);
 
         return setting;
@@ -44,15 +43,8 @@ public class SettingGroup implements ISerializable<SettingGroup>, Iterable<Setti
         return settings.get(index);
     }
 
-    public boolean wasChanged() {
-        for (Setting<?> setting : settings) {
-            if (setting.wasChanged()) return true;
-        }
-        return false;
-    }
-
     @Override
-    public @NotNull Iterator<Setting<?>> iterator() {
+    public Iterator<Setting<?>> iterator() {
         return settings.iterator();
     }
 
@@ -64,23 +56,21 @@ public class SettingGroup implements ISerializable<SettingGroup>, Iterable<Setti
         tag.putBoolean("sectionExpanded", sectionExpanded);
 
         NbtList settingsTag = new NbtList();
-        for (Setting<?> setting : this) {
-            if (setting.wasChanged()) settingsTag.add(setting.toTag());
-        }
-        if (!settingsTag.isEmpty()) tag.put("settings", settingsTag);
+        for (Setting<?> setting : this) if (setting.wasChanged()) settingsTag.add(setting.toTag());
+        tag.put("settings", settingsTag);
 
         return tag;
     }
 
     @Override
     public SettingGroup fromTag(NbtCompound tag) {
-        sectionExpanded = tag.getBoolean("sectionExpanded", false);
+        sectionExpanded = tag.getBoolean("sectionExpanded");
 
-        NbtList settingsTag = tag.getListOrEmpty("settings");
+        NbtList settingsTag = tag.getList("settings", 10);
         for (NbtElement t : settingsTag) {
             NbtCompound settingTag = (NbtCompound) t;
 
-            Setting<?> setting = get(settingTag.getString("name", ""));
+            Setting<?> setting = get(settingTag.getString("name"));
             if (setting != null) setting.fromTag(settingTag);
         }
 

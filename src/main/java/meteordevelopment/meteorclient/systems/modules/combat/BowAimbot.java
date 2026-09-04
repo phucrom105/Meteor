@@ -5,7 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.combat;
 
-import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
@@ -24,7 +24,6 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.passive.AnimalEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ArrowItem;
-import net.minecraft.item.BowItem;
 import net.minecraft.item.Items;
 import net.minecraft.util.math.Vec3d;
 
@@ -92,22 +91,22 @@ public class BowAimbot extends Module {
     }
 
     @EventHandler
-    private void onTick(TickEvent.Pre event) {
+    private void onRender(Render3DEvent event) {
         if (!PlayerUtils.isAlive() || !itemInHand()) return;
         if (!mc.player.getAbilities().creativeMode && !InvUtils.find(itemStack -> itemStack.getItem() instanceof ArrowItem).found()) return;
 
         target = TargetUtils.get(entity -> {
-            if (entity == mc.player || entity == mc.getCameraEntity()) return false;
-            if ((entity instanceof LivingEntity livingEntity && livingEntity.isDead()) || !entity.isAlive()) return false;
+            if (entity == mc.player || entity == mc.cameraEntity) return false;
+            if ((entity instanceof LivingEntity && ((LivingEntity) entity).isDead()) || !entity.isAlive()) return false;
             if (!PlayerUtils.isWithin(entity, range.get())) return false;
             if (!entities.get().contains(entity.getType())) return false;
             if (!nametagged.get() && entity.hasCustomName()) return false;
             if (!PlayerUtils.canSeeEntity(entity)) return false;
-            if (entity instanceof PlayerEntity player) {
-                if (player.isCreative()) return false;
-                if (!Friends.get().shouldAttack(player)) return false;
+            if (entity instanceof PlayerEntity) {
+                if (((PlayerEntity) entity).isCreative()) return false;
+                if (!Friends.get().shouldAttack((PlayerEntity) entity)) return false;
             }
-            return !(entity instanceof AnimalEntity animal) || babies.get() || !animal.isBaby();
+            return !(entity instanceof AnimalEntity) || babies.get() || !((AnimalEntity) entity).isBaby();
         }, priority.get());
 
         if (target == null) {
@@ -123,8 +122,7 @@ public class BowAimbot extends Module {
                 PathManagers.get().pause();
                 wasPathing = true;
             }
-
-            aim();
+            aim(event.tickDelta);
         }
     }
 
@@ -132,16 +130,23 @@ public class BowAimbot extends Module {
         return InvUtils.testInMainHand(Items.BOW, Items.CROSSBOW);
     }
 
-    private void aim() {
+    private void aim(double tickDelta) {
         // Velocity based on bow charge.
-        float velocity = BowItem.getPullProgress(mc.player.getItemUseTime());
+        float velocity = (mc.player.getItemUseTime() - mc.player.getItemUseTimeLeft()) / 20f;
+        velocity = (velocity * velocity + velocity * 2) / 3;
+        if (velocity > 1) velocity = 1;
 
         // Positions
-        Vec3d pos = target.getEntityPos();
+        double posX = target.getPos().getX() + (target.getPos().getX() - target.prevX) * tickDelta;
+        double posY = target.getPos().getY() + (target.getPos().getY() - target.prevY) * tickDelta;
+        double posZ = target.getPos().getZ() + (target.getPos().getZ() - target.prevZ) * tickDelta;
 
-        double relativeX = pos.x - mc.player.getX();
-        double relativeY = pos.y + (target.getHeight() / 2) - mc.player.getEyeY();
-        double relativeZ = pos.z - mc.player.getZ();
+        // Adjusting for hitbox heights
+        posY -= 1.9f - target.getHeight();
+
+        double relativeX = posX - mc.player.getX();
+        double relativeY = posY - mc.player.getY();
+        double relativeZ = posZ - mc.player.getZ();
 
         // Calculate the pitch
         double hDistance = Math.sqrt(relativeX * relativeX + relativeZ * relativeZ);
@@ -154,7 +159,7 @@ public class BowAimbot extends Module {
         if (Float.isNaN(pitch)) {
             Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target));
         } else {
-            Rotations.rotate(Rotations.getYaw(new Vec3d(pos.x, pos.y, pos.z)), pitch);
+            Rotations.rotate(Rotations.getYaw(new Vec3d(posX, posY, posZ)), pitch);
         }
     }
 

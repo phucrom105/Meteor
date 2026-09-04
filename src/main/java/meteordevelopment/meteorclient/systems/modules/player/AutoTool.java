@@ -14,19 +14,15 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.Xray;
 import meteordevelopment.meteorclient.systems.modules.world.InfinityMiner;
-import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.*;
-import net.minecraft.component.DataComponentTypes;
+import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.enchantment.Enchantments;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.ShearsItem;
+import net.minecraft.item.*;
 import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.registry.tag.ItemTags;
 
 import java.util.List;
 import java.util.function.Predicate;
@@ -146,7 +142,6 @@ public class AutoTool extends Module {
     @EventHandler(priority = EventPriority.HIGH)
     private void onStartBreakingBlock(StartBreakingBlockEvent event) {
         if (Modules.get().isActive(InfinityMiner.class)) return;
-        if (mc.player.isCreative()) return;
 
         // Get blockState
         BlockState blockState = mc.world.getBlockState(event.blockPos);
@@ -195,46 +190,44 @@ public class AutoTool extends Module {
 
     public static double getScore(ItemStack itemStack, BlockState state, boolean silkTouchEnderChest, boolean fortuneOre, EnchantPreference enchantPreference, Predicate<ItemStack> good) {
         if (!good.test(itemStack) || !isTool(itemStack)) return -1;
-        if (!itemStack.isSuitableFor(state) &&
-            !(itemStack.isIn(ItemTags.SWORDS) && (state.getBlock() instanceof BambooBlock || state.getBlock() instanceof BambooShootBlock)) &&
-            !(itemStack.getItem() instanceof ShearsItem && state.getBlock() instanceof LeavesBlock || state.isIn(BlockTags.WOOL)))
-            return -1;
+        if (!itemStack.isSuitableFor(state) && !(itemStack.getItem() instanceof SwordItem && (state.getBlock() instanceof BambooBlock || state.getBlock() instanceof BambooShootBlock)) && !(itemStack.getItem() instanceof ShearsItem && state.getBlock() instanceof LeavesBlock || state.isIn(BlockTags.WOOL))) return -1;
 
         if (silkTouchEnderChest
             && state.getBlock() == Blocks.ENDER_CHEST
-            && !Utils.hasEnchantments(itemStack, Enchantments.SILK_TOUCH)) {
+            && EnchantmentHelper.getLevel(Enchantments.SILK_TOUCH, itemStack) == 0) {
             return -1;
         }
 
         if (fortuneOre
             && isFortunable(state.getBlock())
-            && !Utils.hasEnchantments(itemStack, Enchantments.FORTUNE)) {
+            && EnchantmentHelper.getLevel(Enchantments.FORTUNE, itemStack) == 0) {
             return -1;
         }
 
         double score = 0;
 
         score += itemStack.getMiningSpeedMultiplier(state) * 1000;
-        score += Utils.getEnchantmentLevel(itemStack, Enchantments.UNBREAKING);
-        score += Utils.getEnchantmentLevel(itemStack, Enchantments.EFFICIENCY);
-        score += Utils.getEnchantmentLevel(itemStack, Enchantments.MENDING);
+        score += EnchantmentHelper.getLevel(Enchantments.UNBREAKING, itemStack);
+        score += EnchantmentHelper.getLevel(Enchantments.EFFICIENCY, itemStack);
+        score += EnchantmentHelper.getLevel(Enchantments.MENDING, itemStack);
 
-        if (enchantPreference == EnchantPreference.Fortune) score += Utils.getEnchantmentLevel(itemStack, Enchantments.FORTUNE);
-        if (enchantPreference == EnchantPreference.SilkTouch) score += Utils.getEnchantmentLevel(itemStack, Enchantments.SILK_TOUCH);
+        if (enchantPreference == EnchantPreference.Fortune) score += EnchantmentHelper.getLevel(Enchantments.FORTUNE, itemStack);
+        if (enchantPreference == EnchantPreference.SilkTouch) score += EnchantmentHelper.getLevel(Enchantments.SILK_TOUCH, itemStack);
 
-        if (itemStack.isIn(ItemTags.SWORDS) && (state.getBlock() instanceof BambooBlock || state.getBlock() instanceof BambooShootBlock))
-            score += 9000 + (itemStack.get(DataComponentTypes.TOOL).getSpeed(state) * 1000);
+        if (itemStack.getItem() instanceof SwordItem item && (state.getBlock() instanceof BambooBlock || state.getBlock() instanceof BambooShootBlock))
+            score += 9000 + (item.getMaterial().getMiningLevel() * 1000);
+
 
         return score;
     }
 
     public static boolean isTool(Item item) {
-        return isTool(item.getDefaultStack());
+        return item instanceof ToolItem || item instanceof ShearsItem;
+    }
+    public static boolean isTool(ItemStack itemStack) {
+        return isTool(itemStack.getItem());
     }
 
-    public static boolean isTool(ItemStack itemStack) {
-        return itemStack.isIn(ItemTags.AXES) || itemStack.isIn(ItemTags.HOES) || itemStack.isIn(ItemTags.PICKAXES) || itemStack.isIn(ItemTags.SHOVELS) || itemStack.getItem() instanceof ShearsItem;
-    }
 
     private static boolean isFortunable(Block block) {
         if (block == Blocks.ANCIENT_DEBRIS) return false;

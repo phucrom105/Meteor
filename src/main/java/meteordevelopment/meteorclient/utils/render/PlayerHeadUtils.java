@@ -1,7 +1,6 @@
 package meteordevelopment.meteorclient.utils.render;
 
 import com.google.gson.Gson;
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.systems.accounts.TexturesJson;
 import meteordevelopment.meteorclient.systems.accounts.UuidToProfileResponse;
 import meteordevelopment.meteorclient.utils.PostInit;
@@ -13,32 +12,20 @@ import java.util.UUID;
 public class PlayerHeadUtils {
     public static PlayerHeadTexture STEVE_HEAD;
 
-    private PlayerHeadUtils() {
-    }
-
     @PostInit
     public static void init() {
         STEVE_HEAD = new PlayerHeadTexture();
     }
 
-    public static byte[] fetchHead(UUID id) {
+    public static PlayerHeadTexture fetchHead(UUID id) {
         if (id == null) return null;
 
         String url = getSkinUrl(id);
-        if (url == null) return null;
-
-        try {
-            return PlayerHeadTexture.downloadHead(url);
-        } catch (java.io.IOException e) {
-            MeteorClient.LOG.error("Could not fetch player head for {}.", id, e);
-            return null;
-        }
+        return url != null ? new PlayerHeadTexture(url) : null;
     }
 
     public static String getSkinUrl(UUID id) {
-        UuidToProfileResponse res2 = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + id)
-            .exceptionHandler(e -> MeteorClient.LOG.error("Could not contact mojang session servers.", e))
-            .sendJson(UuidToProfileResponse.class);
+        UuidToProfileResponse res2 = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + id).sendJson(UuidToProfileResponse.class);
         if (res2 == null) return null;
 
         String base64Textures = res2.getPropertyValue("textures");

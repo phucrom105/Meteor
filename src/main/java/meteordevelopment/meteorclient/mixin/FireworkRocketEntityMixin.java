@@ -18,37 +18,31 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(FireworkRocketEntity.class)
 public abstract class FireworkRocketEntityMixin {
-    @Shadow
-    private int life;
+    @Shadow protected abstract void explodeAndRemove();
 
-    @Shadow
-    private int lifeTime;
+    @Shadow private int life;
+
+    @Shadow private int lifeTime;
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void onTick(CallbackInfo info) {
-        FireworkRocketEntity firework = ((FireworkRocketEntity) (Object) this);
-
-        if (Modules.get().get(ElytraBoost.class).isFirework(firework) && this.life > this.lifeTime) {
-            firework.discard();
+        if (Modules.get().get(ElytraBoost.class).isFirework((FireworkRocketEntity) (Object) this) && this.life > this.lifeTime) {
+            this.explodeAndRemove();
         }
     }
 
     @Inject(method = "onEntityHit", at = @At("HEAD"), cancellable = true)
     private void onEntityHit(EntityHitResult entityHitResult, CallbackInfo info) {
-        FireworkRocketEntity firework = ((FireworkRocketEntity) (Object) this);
-
-        if (Modules.get().get(ElytraBoost.class).isFirework(firework)) {
-            firework.discard();
+        if (Modules.get().get(ElytraBoost.class).isFirework((FireworkRocketEntity) (Object) this)) {
+            this.explodeAndRemove();
             info.cancel();
         }
     }
 
     @Inject(method = "onBlockHit", at = @At("HEAD"), cancellable = true)
     private void onBlockHit(BlockHitResult blockHitResult, CallbackInfo info) {
-        FireworkRocketEntity firework = ((FireworkRocketEntity) (Object) this);
-
-        if (Modules.get().get(ElytraBoost.class).isFirework(firework)) {
-            firework.discard();
+        if (Modules.get().get(ElytraBoost.class).isFirework((FireworkRocketEntity) (Object) this)) {
+            this.explodeAndRemove();
             info.cancel();
         }
     }

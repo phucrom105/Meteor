@@ -22,7 +22,6 @@ import net.minecraft.block.AnvilBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.ButtonBlock;
 import net.minecraft.client.gui.screen.ingame.AnvilScreen;
-import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 
@@ -74,7 +73,7 @@ public class AutoAnvil extends Module {
 
     private final Setting<Boolean> multiPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("multi-place")
-        .description("Places multiple anvils at once.")
+        .description("Places multiple anvils at once..")
         .defaultValue(true)
         .build()
     );
@@ -114,7 +113,7 @@ public class AutoAnvil extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         // Head check
-        if (toggleOnBreak.get() && target != null && target.getEquippedStack(EquipmentSlot.HEAD).isEmpty()) {
+        if (toggleOnBreak.get() && target != null && target.getInventory().getArmorStack(3).isEmpty()) {
             error("Target head slot is empty... disabling.");
             toggle();
             return;

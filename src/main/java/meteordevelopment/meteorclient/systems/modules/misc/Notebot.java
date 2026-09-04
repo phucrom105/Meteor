@@ -35,9 +35,10 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.NoteBlock;
-import net.minecraft.block.enums.NoteBlockInstrument;
+import net.minecraft.block.enums.Instrument;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
+import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -254,7 +255,7 @@ public class Notebot extends Module {
     public Notebot() {
         super(Categories.Misc, "notebot", "Plays noteblock nicely");
 
-        for (NoteBlockInstrument inst : NoteBlockInstrument.values()) {
+        for (Instrument inst : Instrument.values()) {
             NotebotUtils.OptionalInstrument optionalInstrument = NotebotUtils.OptionalInstrument.fromMinecraftInstrument(inst);
             if (optionalInstrument != null) {
                 sgNoteMap.add(new EnumSetting.Builder<NotebotUtils.OptionalInstrument>()
@@ -473,7 +474,7 @@ public class Notebot extends Module {
         // Modifiable list of unique notes
         List<Note> uniqueNotesToUse = new ArrayList<>(song.getRequirements());
         // A map with noteblocks that have incorrect note level
-        Map<NoteBlockInstrument, List<BlockPos>> incorrectNoteBlocks = new HashMap<>();
+        Map<Instrument, List<BlockPos>> incorrectNoteBlocks = new HashMap<>();
 
         // Check if there are already tuned noteblocks
         for (var entry : scannedNoteblocks.asMap().entrySet()) {
@@ -482,7 +483,7 @@ public class Notebot extends Module {
 
             if (uniqueNotesToUse.contains(note)) {
                 // Add correct noteblock position to a noteBlockPositions
-                noteBlockPositions.put(note, noteblocks.removeFirst());
+                noteBlockPositions.put(note, noteblocks.remove(0));
                 uniqueNotesToUse.remove(note);
             }
 
@@ -502,7 +503,7 @@ public class Notebot extends Module {
             List<BlockPos> positions = entry.getValue();
 
             if (mode.get() == NotebotUtils.NotebotMode.ExactInstruments) {
-                NoteBlockInstrument inst = entry.getKey();
+                Instrument inst = entry.getKey();
 
                 List<Note> foundNotes = uniqueNotesToUse.stream()
                     .filter(note -> note.getInstrument() == inst)
@@ -513,7 +514,7 @@ public class Notebot extends Module {
                 for (BlockPos pos : positions) {
                     if (foundNotes.isEmpty()) break;
 
-                    Note note = foundNotes.removeFirst();
+                    Note note = foundNotes.remove(0);
                     noteBlockPositions.put(note, pos);
 
                     uniqueNotesToUse.remove(note);
@@ -522,7 +523,7 @@ public class Notebot extends Module {
                 for (BlockPos pos : positions) {
                     if (uniqueNotesToUse.isEmpty()) break;
 
-                    Note note = uniqueNotesToUse.removeFirst();
+                    Note note = uniqueNotesToUse.remove(0);
                     noteBlockPositions.put(note, pos);
                 }
             }
@@ -548,8 +549,6 @@ public class Notebot extends Module {
             BlockPos blockPos = entry.getValue();
 
             BlockState blockState = mc.world.getBlockState(blockPos);
-            if (blockState.getBlock() != Blocks.NOTE_BLOCK) continue;
-
             int currentLevel = blockState.get(NoteBlock.NOTE);
 
             if (targetLevel != currentLevel) {
@@ -626,7 +625,7 @@ public class Notebot extends Module {
     }
 
     public void pause() {
-        enable();
+        if (!isActive()) toggle();
         if (isPlaying) {
             info("Pausing.");
             isPlaying = false;
@@ -638,7 +637,7 @@ public class Notebot extends Module {
 
     public void stop() {
         info("Stopping.");
-        disableNotebot();
+        disable();
         updateStatus();
     }
 
@@ -662,9 +661,9 @@ public class Notebot extends Module {
         }
     }
 
-    public void disableNotebot() {
+    public void disable() {
         resetVariables();
-        enable();
+        if (!isActive()) toggle();
     }
 
     /**
@@ -673,7 +672,7 @@ public class Notebot extends Module {
      * @param file Song supported by one of {@link SongDecoder}
      */
     public void loadSong(File file) {
-        enable();
+        if (!isActive()) toggle();
         resetVariables();
 
         this.playingMode = PlayingMode.Noteblocks;
@@ -690,7 +689,7 @@ public class Notebot extends Module {
      * @param file Song supported by one of {@link SongDecoder}
      */
     public void previewSong(File file) {
-        enable();
+        if (!isActive()) toggle();
         resetVariables();
 
         this.playingMode = PlayingMode.Preview;
@@ -753,7 +752,7 @@ public class Notebot extends Module {
                     error("Loading song '" + FilenameUtils.getBaseName(file.getName()) + "' was cancelled.");
                 } else {
                     error("An error occurred while loading song '" + FilenameUtils.getBaseName(file.getName()) + "'. See the logs for more details");
-                    MeteorClient.LOG.error("An error occurred while loading song '{}'", FilenameUtils.getBaseName(file.getName()), ex);
+                    MeteorClient.LOG.error("An error occurred while loading song '" + FilenameUtils.getBaseName(file.getName()) + "'", ex);
                     onSongEnd();
                 }
             }
@@ -767,8 +766,8 @@ public class Notebot extends Module {
     private void scanForNoteblocks() {
         if (mc.interactionManager == null || mc.world == null || mc.player == null) return;
         scannedNoteblocks.clear();
-        int min = (int) (-mc.player.getBlockInteractionRange()) - 2;
-        int max = (int) mc.player.getBlockInteractionRange() + 2;
+        int min = (int) (-mc.interactionManager.getReachDistance()) - 2;
+        int max = (int) mc.interactionManager.getReachDistance() + 2;
 
         // Scan for noteblocks horizontally
         // 6^3 kek
@@ -781,7 +780,9 @@ public class Notebot extends Module {
                     if (blockState.getBlock() != Blocks.NOTE_BLOCK) continue;
 
                     // Copied from ServerPlayNetworkHandler#onPlayerInteractBlock
-                    if (!mc.player.canInteractWithBlockAt(pos, 1)) continue;
+                    Vec3d vec3d2 = Vec3d.ofCenter(pos);
+                    double sqDist = mc.player.getEyePos().squaredDistanceTo(vec3d2);
+                    if (sqDist > ServerPlayNetworkHandler.MAX_BREAK_SQUARED_DISTANCE) continue;
 
                     if (!isValidScanSpot(pos)) continue;
 
@@ -789,6 +790,7 @@ public class Notebot extends Module {
                     scannedNoteblocks.put(note, pos);
                 }
             }
+
         }
     }
 
@@ -831,7 +833,7 @@ public class Notebot extends Module {
 
     private void tuneBlocks() {
         if (mc.world == null || mc.player == null) {
-            disableNotebot();
+            disable();
         }
 
         if (swingArm.get()) {
@@ -870,7 +872,7 @@ public class Notebot extends Module {
 
     private void tuneNoteblockWithPackets(BlockPos pos) {
         // We don't need to raycast here. Server handles this packet fine
-        mc.interactionManager.sendSequencedPacket(mc.world, (sequence) -> new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, new BlockHitResult(Vec3d.ofCenter(pos), Direction.DOWN, pos, false), sequence));
+        mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, new BlockHitResult(Vec3d.ofCenter(pos), Direction.DOWN, pos, false), 0));
 
         anyNoteblockTuned = true;
     }
@@ -927,7 +929,7 @@ public class Notebot extends Module {
     private void playRotate(BlockPos pos) {
         if (mc.interactionManager == null) return;
         try {
-            mc.interactionManager.sendSequencedPacket(mc.world, (sequence) -> new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, Direction.DOWN, sequence));
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, Direction.DOWN, 0));
         } catch (NullPointerException ignored) {
         }
     }
@@ -938,13 +940,13 @@ public class Notebot extends Module {
     }
 
     /**
-     * Gets an NoteBlockInstrument from Note Map
+     * Gets an Instrument from Note Map
      *
      * @param inst An instrument
      * @return A new instrument mapped by instrument given in parameters
      */
     @Nullable
-    public NoteBlockInstrument getMappedInstrument(@NotNull NoteBlockInstrument inst) {
+    public Instrument getMappedInstrument(@NotNull Instrument inst) {
         if (mode.get() == NotebotUtils.NotebotMode.ExactInstruments) {
             NotebotUtils.OptionalInstrument optionalInstrument = (NotebotUtils.OptionalInstrument) sgNoteMap.getByIndex(inst.ordinal()).get();
             return optionalInstrument.toMinecraftInstrument();

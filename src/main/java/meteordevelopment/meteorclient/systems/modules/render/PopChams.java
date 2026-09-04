@@ -17,7 +17,6 @@ import meteordevelopment.meteorclient.utils.render.WireframeEntityRenderer;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityStatuses;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 
@@ -104,7 +103,7 @@ public class PopChams extends Module {
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
         if (!(event.packet instanceof EntityStatusS2CPacket p)) return;
-        if (p.getStatus() != EntityStatuses.USE_TOTEM_OF_UNDYING) return;
+        if (p.getStatus() != 35) return;
 
         Entity entity = p.getEntity(mc.world);
         if (!(entity instanceof PlayerEntity player) || entity == mc.player) return;
@@ -140,7 +139,7 @@ public class PopChams extends Module {
 
             // Y Modifier
             lastRenderY = getY();
-            ((IVec3d) getEntityPos()).meteor$setY(getY() + yModifier.get() * event.frameTime);
+            ((IVec3d) getPos()).setY(getY() + yModifier.get() * event.frameTime);
 
             // Scale Modifier
             scale += scaleModifier.get() * event.frameTime;
@@ -150,8 +149,8 @@ public class PopChams extends Module {
             int preLineA = lineColor.get().a;
 
             if (fadeOut.get()) {
-                sideColor.get().a *= (1 - timer / renderTime.get());
-                lineColor.get().a *= (1 - timer / renderTime.get());
+                sideColor.get().a *= 1 - timer / renderTime.get();
+                lineColor.get().a *= 1 - timer / renderTime.get();
             }
 
             // Render

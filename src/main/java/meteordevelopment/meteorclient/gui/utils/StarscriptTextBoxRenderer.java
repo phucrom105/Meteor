@@ -11,32 +11,22 @@ import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
 import meteordevelopment.meteorclient.systems.hud.elements.TextHud;
 import meteordevelopment.meteorclient.utils.misc.MeteorStarscript;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import org.meteordev.starscript.utils.SemanticToken;
-import org.meteordev.starscript.utils.SemanticTokenProvider;
-import org.meteordev.starscript.utils.SemanticTokenType;
+import meteordevelopment.starscript.compiler.Parser;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class StarscriptTextBoxRenderer implements WTextBox.Renderer {
+    private static final String[] KEYWORDS = { "null", "true", "false", "and", "or" };
     private static final Color RED = new Color(225, 25, 25);
 
-    private final List<SemanticToken> tokens = new ArrayList<>();
-    private final List<Section> sections = new ArrayList<>();
-
     private String lastText;
+    private final List<Section> sections = new ArrayList<>();
 
     @Override
     public void render(GuiRenderer renderer, double x, double y, String text, Color color) {
-        // Generate
-        if (lastText == null || !lastText.equals(text)) {
-            lastText = text;
+        if (lastText == null || !lastText.equals(text)) generate(renderer.theme, text, color);
 
-            SemanticTokenProvider.get(text, tokens);
-            convertTokensToSections(renderer.theme);
-        }
-
-        // Render
         for (Section section : sections) {
             renderer.text(section.text, x, y, section.color, false);
             x += renderer.theme.textWidth(section.text);
@@ -56,62 +46,171 @@ public class StarscriptTextBoxRenderer implements WTextBox.Renderer {
         return completions;
     }
 
-    private void convertTokensToSections(GuiTheme theme) {
+    private void generate(GuiTheme theme, String text, Color defaultColor) {
+        lastText = text;
         sections.clear();
 
-        int start = 0;
+        Parser.Result result = Parser.parse(text);
 
-        for (SemanticToken token : tokens) {
-            if (start != token.start) {
-                sections.add(new Section(
-                    lastText.substring(start, token.start),
-                    theme.starscriptTextColor()
-                ));
+        StringBuilder sb = new StringBuilder();
+        StringBuilder sb2 = new StringBuilder();
+        int depth = 0;
+
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean addChar = true;
+            int charDepth = depth;
+
+            if (result.hasErrors()) {
+                if (i == result.errors.get(0).character) {
+                    sections.add(new Section(sb.toString(), charDepth > 0 ? theme.starscriptTextColor() : defaultColor));
+                    sb.setLength(0);
+                }
+                else if (i > result.errors.get(0).character) {
+                    sb.append(c);
+                    continue;
+                }
             }
 
-            String text = lastText.substring(token.start, token.end);
+            Section section = null;
 
-            sections.add(new Section(
-                text,
-                getColorForToken(theme, token.type, text)
-            ));
+            switch (c) {
+                case '#' -> {
+                    while (i + 1 < text.length()) {
+                        char ch = text.charAt(i + 1);
+                        if (isDigit(ch)) {
+                            sb2.append(ch);
+                            i++;
+                        }
+                        else break;
+                    }
 
-            start = token.end;
-        }
+                    if (!sb2.isEmpty()) {
+                        String str = sb2.toString();
+                        section = new Section("#" + str, TextHud.getSectionColor(Integer.parseInt(str)));
+                        sb2.setLength(0);
+                    }
+                }
+                case '{', '}'  -> {
+                    if (c == '{') depth++;
+                    else depth--;
 
-        if (start < lastText.length()) {
-            sections.add(new Section(
-                lastText.substring(start),
-                theme.starscriptTextColor()
-            ));
-        }
-    }
+                    section = new Section(Character.toString(c), theme.starscriptBraceColor());
+                }
+            }
 
-    private static Color getColorForToken(GuiTheme theme, SemanticTokenType type, String text) {
-        return switch (type) {
-            case Dot -> theme.starscriptDotColor();
-            case Comma -> theme.starscriptCommaColor();
-            case Operator -> theme.starscriptOperatorColor();
-            case String -> theme.starscriptStringColor();
-            case Number -> theme.starscriptNumberColor();
-            case Keyword -> theme.starscriptKeywordColor();
-            case Paren -> theme.starscriptParenthesisColor();
-            case Brace -> theme.starscriptBraceColor();
-            case Identifier -> theme.starscriptTextColor();
-            case Map -> theme.starscriptAccessedObjectColor();
-            case Section -> {
-                if (text.startsWith("#")) {
-                    text = text.substring(1);
+            if (section == null && depth > 0) {
+                if (c == '.') {
+                    sections.add(new Section(sb.toString(), theme.starscriptAccessedObjectColor()));
+                    sections.add(new Section(".", theme.starscriptDotColor()));
+
+                    sb.setLength(0);
+                    addChar = false;
+                }
+                else {
+                    switch (c) {
+                        case '(', ')' -> section = new Section(Character.toString(c), theme.starscriptParenthesisColor());
+                        case ',' -> section = new Section(",", theme.starscriptCommaColor());
+                        case '+', '-', '*', '/', '%', '^', '?', ':' -> {
+                            if (c == '-' && i + 1 < text.length() && isDigit(text.charAt(i + 1))) break;
+                            section = new Section(Character.toString(c), theme.starscriptOperatorColor());
+                        }
+                        case '=', '!', '>', '<' -> {
+                            boolean equals = i + 1 < text.length() && text.charAt(i + 1) == '=';
+                            if (equals) i++;
+
+                            section = new Section(equals ? (c + "=") : Character.toString(c), theme.starscriptOperatorColor());
+                        }
+                        case '"', '\'' -> {
+                            sb2.append(c);
+                            while (i + 1 < text.length()) {
+                                char ch = text.charAt(i + 1);
+                                if (ch != '"' && ch != '\'') {
+                                    sb2.append(ch);
+                                    i++;
+                                } else {
+                                    sb2.append(ch);
+                                    i++;
+                                    break;
+                                }
+                            }
+
+                            section = new Section(sb2.toString(), theme.starscriptStringColor());
+                            sb2.setLength(0);
+                        }
+                    }
+
+                    if (section == null) {
+                        if (isDigit(c) || (c == '-' && i + 1 < text.length() && isDigit(text.charAt(i + 1)))) {
+                            sb2.append(c);
+
+                            while (i + 1 < text.length()) {
+                                char ch = text.charAt(i + 1);
+                                if (isDigit(ch)) {
+                                    sb2.append(ch);
+                                    i++;
+                                } else break;
+                            }
+
+                            if (i + 1 < text.length() && text.charAt(i + 1) == '.') {
+                                if (i + 2 < text.length() && isDigit(text.charAt(i + 2))) {
+                                    sb2.append('.');
+                                    i++;
+
+                                    while (i + 1 < text.length()) {
+                                        char ch = text.charAt(i + 1);
+                                        if (isDigit(ch)) {
+                                            sb2.append(ch);
+                                            i++;
+                                        } else break;
+                                    }
+                                }
+                            }
+
+                            section = new Section(sb2.toString(), theme.starscriptNumberColor());
+                            sb2.setLength(0);
+                        } else {
+                            for (String keyword : KEYWORDS) {
+                                if (isKeyword(text, i, keyword)) {
+                                    section = new Section(keyword, theme.starscriptKeywordColor());
+                                    i += keyword.length() - 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (section != null) {
+                if (!sb.isEmpty()) {
+                    sections.add(new Section(sb.toString(), charDepth > 0 ? theme.starscriptTextColor() : defaultColor));
+                    sb.setLength(0);
                 }
 
-                try {
-                    yield TextHud.getSectionColor(Integer.parseInt(text));
-                } catch (NumberFormatException ignored) {}
-
-                yield theme.starscriptTextColor();
+                sections.add(section);
             }
-            case Error -> RED;
-        };
+            else if (addChar) sb.append(c);
+        }
+
+        if (!sb.isEmpty()) sections.add(new Section(sb.toString(), result.hasErrors() ? RED : defaultColor));
+    }
+
+    private boolean isKeyword(String text, int i, String keyword) {
+        if (i > 0) {
+            char c = text.charAt(i - 1);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') return false;
+        }
+
+        for (int j = 0; j < keyword.length(); j++) {
+            if (i + j >= text.length() || text.charAt(i + j) != keyword.charAt(j)) return false;
+        }
+
+        return true;
+    }
+
+    private boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
     }
 
     private record Section(String text, Color color) {}

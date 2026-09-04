@@ -1,10 +1,9 @@
 package meteordevelopment.meteorclient.utils.render;
 
 import com.mojang.blaze3d.platform.TextureUtil;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.TextureFormat;
-import meteordevelopment.meteorclient.MeteorClient;
+import com.mojang.blaze3d.systems.RenderSystem;
 import meteordevelopment.meteorclient.renderer.Texture;
+import meteordevelopment.meteorclient.utils.misc.MeteorIdentifier;
 import meteordevelopment.meteorclient.utils.network.Http;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.stb.STBImage;
@@ -23,49 +22,16 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class PlayerHeadTexture extends Texture {
     private boolean needsRotate;
 
-    public PlayerHeadTexture(byte[] head, boolean needsRotate) {
-        super(8, 8, TextureFormat.RGBA8, FilterMode.NEAREST, FilterMode.NEAREST);
-
-        upload(BufferUtils.createByteBuffer(head.length).put(head));
-        this.needsRotate = needsRotate;
-    }
-
-    public PlayerHeadTexture() {
-        super(8, 8, TextureFormat.RGBA8, FilterMode.NEAREST, FilterMode.NEAREST);
-
-        try (InputStream inputStream = mc.getResourceManager().getResource(MeteorClient.identifier("textures/steve.png")).get().getInputStream()) {
-            ByteBuffer data = TextureUtil.readResource(inputStream);
-            data.rewind();
-
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                IntBuffer width = stack.mallocInt(1);
-                IntBuffer height = stack.mallocInt(1);
-                IntBuffer comp = stack.mallocInt(1);
-
-                ByteBuffer image = STBImage.stbi_load_from_memory(data, width, height, comp, 4);
-                upload(image);
-                STBImage.stbi_image_free(image);
-            }
-            MemoryUtil.memFree(data);
-        }
-        catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public boolean needsRotate() {
-        return needsRotate;
-    }
-
-    public static byte[] downloadHead(String url) throws IOException {
+    public PlayerHeadTexture(String url) {
         BufferedImage skin;
-        try (InputStream in = Http.get(url).sendInputStream()) {
-            skin = ImageIO.read(in);
+        try {
+            skin = ImageIO.read(Http.get(url).sendInputStream());
+        } catch (IOException e) {
+            e.printStackTrace();
+            return;
         }
 
-        if (skin == null) throw new IOException("Failed to decode skin image.");
-
-        byte[] head = new byte[8 * 8 * 4];
+        byte[] head = new byte[8 * 8 * 3];
         int[] pixel = new int[4];
 
         int i = 0;
@@ -73,8 +39,9 @@ public class PlayerHeadTexture extends Texture {
             for (int y = 8; y < 16; y++) {
                 skin.getData().getPixel(x, y, pixel);
 
-                for (int j = 0; j < 4; j++) {
-                    head[i++] = (byte) pixel[j];
+                for (int j = 0; j < 3; j++) {
+                    head[i] = (byte) pixel[j];
+                    i++;
                 }
             }
         }
@@ -85,14 +52,48 @@ public class PlayerHeadTexture extends Texture {
                 skin.getData().getPixel(x, y, pixel);
 
                 if (pixel[3] != 0) {
-                    for (int j = 0; j < 4; j++) {
-                        head[i++] = (byte) pixel[j];
+                    for (int j = 0; j < 3; j++) {
+                        head[i] = (byte) pixel[j];
+                        i++;
                     }
                 }
-                else i += 4;
+                else i += 3;
             }
         }
 
-        return head;
+        upload(BufferUtils.createByteBuffer(head.length).put(head));
+
+        needsRotate = true;
+    }
+
+    public PlayerHeadTexture() {
+        try (InputStream inputStream = mc.getResourceManager().getResource(new MeteorIdentifier("textures/steve.png")).get().getInputStream()) {
+            ByteBuffer data = TextureUtil.readResource(inputStream);
+            data.rewind();
+
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer width = stack.mallocInt(1);
+                IntBuffer height = stack.mallocInt(1);
+                IntBuffer comp = stack.mallocInt(1);
+
+                ByteBuffer image = STBImage.stbi_load_from_memory(data, width, height, comp, 3);
+                upload(image);
+                STBImage.stbi_image_free(image);
+            }
+            MemoryUtil.memFree(data);
+        }
+        catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void upload(ByteBuffer data) {
+        Runnable action = () -> upload(8, 8, data, Texture.Format.RGB, Texture.Filter.Nearest, Texture.Filter.Nearest, false);
+        if (RenderSystem.isOnRenderThread()) action.run();
+        else RenderSystem.recordRenderCall(action::run);
+    }
+
+    public boolean needsRotate() {
+        return needsRotate;
     }
 }

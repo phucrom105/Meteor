@@ -1,33 +1,34 @@
 package meteordevelopment.meteorclient.utils.render.postprocess;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import meteordevelopment.meteorclient.mixininterface.IWorldRenderer;
-import meteordevelopment.meteorclient.utils.render.CustomOutlineVertexConsumerProvider;
-import net.minecraft.entity.Entity;
+import meteordevelopment.meteorclient.mixin.WorldRendererAccessor;
+import net.minecraft.client.gl.Framebuffer;
+import net.minecraft.client.render.OutlineVertexConsumerProvider;
+import net.minecraft.client.render.WorldRenderer;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public abstract class EntityShader extends PostProcessShader {
-    public final CustomOutlineVertexConsumerProvider vertexConsumerProvider;
-
-    protected EntityShader(RenderPipeline pipeline) {
-        super(pipeline);
-        this.vertexConsumerProvider = new CustomOutlineVertexConsumerProvider();
-    }
-
-    public abstract boolean shouldDraw(Entity entity);
+    private Framebuffer prevBuffer;
 
     @Override
     protected void preDraw() {
-        ((IWorldRenderer) mc.worldRenderer).meteor$pushEntityOutlineFramebuffer(framebuffer);
+        WorldRenderer worldRenderer = mc.worldRenderer;
+        WorldRendererAccessor wra = (WorldRendererAccessor) worldRenderer;
+        prevBuffer = worldRenderer.getEntityOutlinesFramebuffer();
+        wra.setEntityOutlinesFramebuffer(framebuffer);
     }
 
     @Override
     protected void postDraw() {
-        ((IWorldRenderer) mc.worldRenderer).meteor$popEntityOutlineFramebuffer();
+        if (prevBuffer == null) return;
+
+        WorldRenderer worldRenderer = mc.worldRenderer;
+        WorldRendererAccessor wra = (WorldRendererAccessor) worldRenderer;
+        wra.setEntityOutlinesFramebuffer(prevBuffer);
+        prevBuffer = null;
     }
 
-    public void submitVertices() {
-        submitVertices(vertexConsumerProvider::draw);
+    public void endRender() {
+        endRender(() -> ((OutlineVertexConsumerProvider) vertexConsumerProvider).draw());
     }
 }

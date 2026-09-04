@@ -11,6 +11,9 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(ClientPlayerEntity.class)
 public interface ClientPlayerEntityAccessor {
+    @Accessor("mountJumpStrength")
+    void setMountJumpStrength(float strength);
+
     @Accessor("ticksSinceLastPositionPacketSent")
-    void meteor$setTicksSinceLastPositionPacketSent(int ticks);
+    void setTicksSinceLastPositionPacketSent(int ticks);
 }

@@ -5,16 +5,12 @@
 
 package meteordevelopment.meteorclient.systems.modules.render;
 
-import meteordevelopment.meteorclient.events.render.RenderBlockEntityEvent;
 import meteordevelopment.meteorclient.events.world.ChunkOcclusionEvent;
 import meteordevelopment.meteorclient.events.world.ParticleEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.AbstractBannerBlock;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockEntityProvider;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.particle.ParticleType;
@@ -144,12 +140,6 @@ public class NoRender extends Module {
         .defaultValue(false)
         .build()
     );
-    private final Setting<Boolean> noTitle = sgHUD.add(new BoolSetting.Builder()
-        .name("title")
-        .description("Disables rendering of the title.")
-        .defaultValue(false)
-        .build()
-    );
 
     private final Setting<Boolean> noHeldItemName = sgHUD.add(new BoolSetting.Builder()
         .name("held-item-name")
@@ -184,13 +174,6 @@ public class NoRender extends Module {
     private final Setting<Boolean> noWeather = sgWorld.add(new BoolSetting.Builder()
         .name("weather")
         .description("Disables rendering of weather.")
-        .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> noWorldBorder = sgWorld.add(new BoolSetting.Builder()
-        .name("world-border")
-        .description("Disables rendering of the world border.")
         .defaultValue(false)
         .build()
     );
@@ -244,6 +227,13 @@ public class NoRender extends Module {
         .build()
     );
 
+    private final Setting<Boolean> noSkylightUpdates = sgWorld.add(new BoolSetting.Builder()
+        .name("skylight-updates")
+        .description("Disables rendering of skylight updates.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> noBeaconBeams = sgWorld.add(new BoolSetting.Builder()
         .name("beacon-beams")
         .description("Disables rendering of beacon beams.")
@@ -269,13 +259,6 @@ public class NoRender extends Module {
     private final Setting<Boolean> noMapMarkers = sgWorld.add(new BoolSetting.Builder()
         .name("map-markers")
         .description("Disables markers on maps.")
-        .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> noMapContents = sgWorld.add(new BoolSetting.Builder()
-        .name("map-contents")
-        .description("Disable rendering of maps.")
         .defaultValue(false)
         .build()
     );
@@ -309,16 +292,9 @@ public class NoRender extends Module {
 
     private final Setting<Boolean> noTextureRotations = sgWorld.add(new BoolSetting.Builder()
         .name("texture-rotations")
-        .description("Changes texture rotations and model offsets to use a constant value instead of the block position.")
+        .description("Changes texture rotations and model offsets to use a random value instead of the block position.")
         .defaultValue(false)
         .onChanged(b -> mc.worldRenderer.reload())
-        .build()
-    );
-
-    private final Setting<List<Block>> blockEntities = sgWorld.add(new BlockListSetting.Builder()
-        .name("block-entities")
-        .description("Block entities (chest, shulker block, etc.) to not render.")
-        .filter(block -> block instanceof BlockEntityProvider && !(block instanceof AbstractBannerBlock))
         .build()
     );
 
@@ -385,12 +361,12 @@ public class NoRender extends Module {
 
     @Override
     public void onActivate() {
-        if (noCaveCulling.get() || noTextureRotations.get()) mc.worldRenderer.reload();
+        if (noCaveCulling.get()) mc.worldRenderer.reload();
     }
 
     @Override
     public void onDeactivate() {
-        if (noCaveCulling.get() || noTextureRotations.get()) mc.worldRenderer.reload();
+        if (noCaveCulling.get()) mc.worldRenderer.reload();
     }
 
     // Overlay
@@ -460,9 +436,6 @@ public class NoRender extends Module {
     public boolean noCrosshair() {
         return isActive() && noCrosshair.get();
     }
-    public boolean noTitle() {
-        return isActive() && noTitle.get();
-    }
 
     public boolean noHeldItemName() {
         return isActive() && noHeldItemName.get();
@@ -484,10 +457,6 @@ public class NoRender extends Module {
 
     public boolean noWeather() {
         return isActive() && noWeather.get();
-    }
-
-    public boolean noWorldBorder() {
-        return isActive() && noWorldBorder.get();
     }
 
     public boolean noBlindness() {
@@ -518,6 +487,10 @@ public class NoRender extends Module {
         return isActive() && noBlockBreakOverlay.get();
     }
 
+    public boolean noSkylightUpdates() {
+        return isActive() && noSkylightUpdates.get();
+    }
+
     public boolean noBeaconBeams() {
         return isActive() && noBeaconBeams.get();
     }
@@ -533,10 +506,6 @@ public class NoRender extends Module {
 
     public boolean noMapMarkers() {
         return isActive() && noMapMarkers.get();
-    }
-
-    public boolean noMapContents() {
-        return isActive() && noMapContents.get();
     }
 
     public BannerRenderMode getBannerRenderMode() {
@@ -561,11 +530,6 @@ public class NoRender extends Module {
 
     public boolean noTextureRotations() {
         return isActive() && noTextureRotations.get();
-    }
-
-    @EventHandler
-    private void onRenderBlockEntity(RenderBlockEntityEvent event) {
-        if (blockEntities.get().contains(event.blockEntityState.blockState.getBlock())) event.cancel();
     }
 
     // Entity

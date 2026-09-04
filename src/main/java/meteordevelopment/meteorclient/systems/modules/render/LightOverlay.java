@@ -7,7 +7,10 @@ package meteordevelopment.meteorclient.systems.modules.render;
 
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.renderer.Renderer3D;
+import meteordevelopment.meteorclient.renderer.DrawMode;
+import meteordevelopment.meteorclient.renderer.Mesh;
+import meteordevelopment.meteorclient.renderer.ShaderMesh;
+import meteordevelopment.meteorclient.renderer.Shaders;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -51,12 +54,10 @@ public class LightOverlay extends Module {
         .build()
     );
 
-    private final Setting<Integer> lightLevel = sgGeneral.add(new IntSetting.Builder()
-        .name("light-level")
-        .description("Which light levels to render. Old spawning light: 7.")
-        .defaultValue(0)
-        .min(0)
-        .sliderMax(15)
+    private final Setting<Boolean> newMobSpawnLightLevel = sgGeneral.add(new BoolSetting.Builder()
+        .name("new-mob-spawn-light-level")
+        .description("Use the new (1.18+) mob spawn behavior")
+        .defaultValue(true)
         .build()
     );
 
@@ -79,17 +80,22 @@ public class LightOverlay extends Module {
     private final Pool<Cross> crossPool = new Pool<>(Cross::new);
     private final List<Cross> crosses = new ArrayList<>();
 
+    private final BlockPos.Mutable bp = new BlockPos.Mutable();
+
+    private final Mesh mesh = new ShaderMesh(Shaders.POS_COLOR, DrawMode.Lines, Mesh.Attrib.Vec3, Mesh.Attrib.Color);
+
     public LightOverlay() {
         super(Categories.Render, "light-overlay", "Shows blocks where mobs can spawn.");
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        crossPool.freeAll(crosses);
+        for (Cross cross : crosses) crossPool.free(cross);
         crosses.clear();
 
+        int spawnLightLevel = newMobSpawnLightLevel.get() ? 0 : 7;
         BlockIterator.register(horizontalRange.get(), verticalRange.get(), (blockPos, blockState) -> {
-            switch (BlockUtils.isValidMobSpawn(blockPos, blockState, lightLevel.get())) {
+            switch (BlockUtils.isValidMobSpawn(blockPos, blockState, spawnLightLevel)) {
                 case Potential -> crosses.add(crossPool.get().set(blockPos, true));
                 case Always -> crosses.add((crossPool.get().set(blockPos, false)));
             }
@@ -100,11 +106,20 @@ public class LightOverlay extends Module {
     private void onRender(Render3DEvent event) {
         if (crosses.isEmpty()) return;
 
-        Renderer3D renderer = seeThroughBlocks.get() ? event.renderer : event.depthRenderer;
+        mesh.depthTest = !seeThroughBlocks.get();
+        mesh.begin();
 
-        for (Cross cross : crosses) {
-            cross.render(renderer);
-        }
+        for (Cross cross : crosses) cross.render();
+
+        mesh.end();
+        mesh.render(event.matrices);
+    }
+
+    private void line(double x1, double y1, double z1, double x2, double y2, double z2, Color color) {
+        mesh.line(
+            mesh.vec3(x1, y1, z1).color(color).next(),
+            mesh.vec3(x2, y2, z2).color(color).next()
+        );
     }
 
     private class Cross {
@@ -121,11 +136,11 @@ public class LightOverlay extends Module {
             return this;
         }
 
-        public void render(Renderer3D renderer) {
+        public void render() {
             Color c = potential ? potentialColor.get() : color.get();
 
-            renderer.line(x, y, z, x + 1, y, z + 1, c);
-            renderer.line(x + 1, y, z, x, y, z + 1, c);
+            line(x, y, z, x + 1, y, z + 1, c);
+            line(x + 1, y, z, x, y, z + 1, c);
         }
     }
 

@@ -21,7 +21,6 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.SheepEntity;
 import net.minecraft.item.Items;
 import net.minecraft.util.Hand;
-import net.minecraft.util.hit.EntityHitResult;
 
 public class AutoShearer extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -81,8 +80,6 @@ public class AutoShearer extends Module {
     }
 
     private void interact() {
-        EntityHitResult location = new EntityHitResult(entity, entity.getBoundingBox().getCenter());
-        mc.interactionManager.interactEntityAtLocation(mc.player, entity, location, hand);
         mc.interactionManager.interactEntity(mc.player, entity, hand);
         InvUtils.swapBack();
     }

@@ -11,6 +11,7 @@ import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 import org.spongepowered.asm.mixin.transformer.IMixinTransformer;
+import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -24,9 +25,10 @@ public class MixinPlugin implements IMixinConfigPlugin {
     private static boolean isOriginsPresent;
     private static boolean isIndigoPresent;
     public static boolean isSodiumPresent;
+    private static boolean isCanvasPresent;
     private static boolean isLithiumPresent;
     public static boolean isIrisPresent;
-    private static boolean isVFPPresent;
+    private static boolean isIndiumPresent;
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -47,24 +49,31 @@ public class MixinPlugin implements IMixinConfigPlugin {
             Field mixinTransformerField = delegateClass.getDeclaredField("mixinTransformer");
             mixinTransformerField.setAccessible(true);
 
+            // Get unsafe
+            Field unsafeField = Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            Unsafe unsafe = (Unsafe) unsafeField.get(null);
+
             // Create Asm
             Asm.init();
 
             // Change delegate
-            Asm.Transformer mixinTransformer = new Asm.Transformer();
+            Asm.Transformer mixinTransformer = (Asm.Transformer) unsafe.allocateInstance(Asm.Transformer.class);
             mixinTransformer.delegate = (IMixinTransformer) mixinTransformerField.get(delegate);
 
             mixinTransformerField.set(delegate, mixinTransformer);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            MeteorClient.LOG.error("Error loading the mixin plugin", e);
+        }
+        catch (NoSuchFieldException | IllegalAccessException | InstantiationException e) {
+            e.printStackTrace();
         }
 
         isIndigoPresent = FabricLoader.getInstance().isModLoaded("fabric-renderer-indigo");
         isOriginsPresent = FabricLoader.getInstance().isModLoaded("origins");
         isSodiumPresent = FabricLoader.getInstance().isModLoaded("sodium");
+        isCanvasPresent = FabricLoader.getInstance().isModLoaded("canvas");
         isLithiumPresent = FabricLoader.getInstance().isModLoaded("lithium");
         isIrisPresent = FabricLoader.getInstance().isModLoaded("iris");
-        isVFPPresent = FabricLoader.getInstance().isModLoaded("viafabricplus");
+        isIndiumPresent = FabricLoader.getInstance().isModLoaded("indium");
 
         loaded = true;
     }
@@ -88,11 +97,14 @@ public class MixinPlugin implements IMixinConfigPlugin {
         else if (mixinClassName.startsWith(mixinPackage + ".indigo")) {
             return isIndigoPresent;
         }
+        else if (mixinClassName.startsWith(mixinPackage + ".canvas")) {
+            return isCanvasPresent;
+        }
         else if (mixinClassName.startsWith(mixinPackage + ".lithium")) {
             return isLithiumPresent;
         }
-        else if (mixinClassName.startsWith(mixinPackage + ".viafabricplus")) {
-            return isVFPPresent;
+        else if (mixinClassName.startsWith(mixinPackage + ".indium")) {
+            return isIndiumPresent;
         }
 
 

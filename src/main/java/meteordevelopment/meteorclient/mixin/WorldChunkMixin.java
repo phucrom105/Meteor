@@ -19,11 +19,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(WorldChunk.class)
-public abstract class WorldChunkMixin {
+public class WorldChunkMixin {
     @Shadow @Final World world;
 
     @Inject(method = "setBlockState", at = @At("TAIL"))
-    private void onSetBlockState(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<BlockState> info) {
-        if (world.isClient()) MeteorClient.EVENT_BUS.post(BlockUpdateEvent.get(pos, info.getReturnValue(), state));
+    private void onSetBlockState(BlockPos pos, BlockState state, boolean moved, CallbackInfoReturnable<BlockState> info) {
+        if (world.isClient) MeteorClient.EVENT_BUS.post(BlockUpdateEvent.get(pos, info.getReturnValue(), state));
     }
 }

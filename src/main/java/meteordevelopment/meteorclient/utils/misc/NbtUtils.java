@@ -6,10 +6,12 @@
 package meteordevelopment.meteorclient.utils.misc;
 
 import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.systems.System;
+import meteordevelopment.meteorclient.utils.render.prompts.OkPrompt;
 import net.minecraft.nbt.*;
+import org.apache.commons.io.output.ByteArrayOutputStream;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.util.*;
 
@@ -43,44 +45,61 @@ public class NbtUtils {
         return map;
     }
 
-    public static boolean toClipboard(ISerializable<?> serializable) {
-        return toClipboard(serializable.toTag());
+    public static boolean toClipboard(System<?> system) {
+        return toClipboard(system.getName(), system.toTag());
     }
 
-    public static boolean toClipboard(NbtCompound tag) {
+    public static boolean toClipboard(String name, NbtCompound nbtCompound) {
         String preClipboard = mc.keyboard.getClipboard();
         try {
             ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-            NbtIo.writeCompressed(tag, byteArrayOutputStream);
+            NbtIo.writeCompressed(nbtCompound, byteArrayOutputStream);
             mc.keyboard.setClipboard(Base64.getEncoder().encodeToString(byteArrayOutputStream.toByteArray()));
             return true;
         } catch (Exception e) {
-            MeteorClient.LOG.error("Error copying NBT to clipboard!", e);
+            MeteorClient.LOG.error(String.format("Error copying %s NBT to clipboard!", name));
+
+            OkPrompt.create()
+                .title(String.format("Error copying %s NBT to clipboard!", name))
+                .message("This shouldn't happen, please report it.")
+                .id("nbt-copying")
+                .show();
+
             mc.keyboard.setClipboard(preClipboard);
             return false;
         }
     }
 
-    public static boolean fromClipboard(ISerializable<?> serializable) {
-        NbtCompound tag = fromClipboard();
-        if (tag == null) return false;
+    public static boolean fromClipboard(System<?> system) {
+        NbtCompound clipboard = fromClipboard(system.toTag());
 
-        NbtCompound sourceTag = serializable.toTag();
-        for (String key : sourceTag.getKeys()) {
-            if (!tag.contains(key)) return false;
+        if (clipboard != null) {
+            system.fromTag(clipboard);
+            return true;
         }
 
-        serializable.fromTag(tag);
-        return true;
+        return false;
     }
 
-    public static NbtCompound fromClipboard() {
+    public static NbtCompound fromClipboard(NbtCompound schema) {
         try {
             byte[] data = Base64.getDecoder().decode(mc.keyboard.getClipboard().trim());
             ByteArrayInputStream bis = new ByteArrayInputStream(data);
-            return NbtIo.readCompressed(new DataInputStream(bis), NbtSizeTracker.ofUnlimitedBytes());
+
+            NbtCompound pasted = NbtIo.readCompressed(new DataInputStream(bis), NbtSizeTracker.ofUnlimitedBytes());
+            for (String key : schema.getKeys()) if (!pasted.getKeys().contains(key)) return null;
+            if (!pasted.getString("name").equals(schema.getString("name"))) return null;
+
+            return pasted;
         } catch (Exception e) {
-            MeteorClient.LOG.error("Invalid NBT data pasted!", e);
+            MeteorClient.LOG.error("Invalid NBT data pasted!");
+
+            OkPrompt.create()
+                .title("Error pasting NBT data!")
+                .message("Please check that the data you pasted is valid.")
+                .id("nbt-pasting")
+                .show();
+
             return null;
         }
     }

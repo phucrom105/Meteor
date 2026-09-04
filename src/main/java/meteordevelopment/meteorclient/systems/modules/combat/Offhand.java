@@ -5,7 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.combat;
 
-import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseButtonEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
@@ -16,11 +16,8 @@ import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.item.AxeItem;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.ItemTags;
+import net.minecraft.item.*;
 
 import static meteordevelopment.orbit.EventPriority.HIGHEST;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
@@ -147,14 +144,14 @@ public class Offhand extends Module {
     }
 
     @EventHandler(priority = HIGHEST + 999)
-    private void onTick(TickEvent.Pre event) {
+    private void onTick(TickEvent.Pre event) throws InterruptedException {
         FindItemResult result = InvUtils.find(Items.TOTEM_OF_UNDYING);
         totems = result.count();
 
         if (totems <= 0) locked = false;
         else if (ticks > delayTicks.get()) {
             boolean low = mc.player.getHealth() + mc.player.getAbsorptionAmount() - PlayerUtils.possibleHealthReductions(explosion.get(), falling.get()) <= minHealth.get();
-            boolean ely = elytra.get() && mc.player.getEquippedStack(EquipmentSlot.CHEST).getItem() == Items.ELYTRA && mc.player.isGliding();
+            boolean ely = elytra.get() && mc.player.getEquippedStack(EquipmentSlot.CHEST).getItem() == Items.ELYTRA && mc.player.isFallFlying();
             FindItemResult item = InvUtils.find(itemStack -> itemStack.getItem() == currentItem.item, 0, 35);
 
             // Calculates Damage from Falling, Explosions + Elyta
@@ -177,7 +174,7 @@ public class Offhand extends Module {
         // Sword Gap & Right Gap
         if (rightgapple.get()) {
             if (!locked) {
-                if (SwordGap.get() && mc.player.getMainHandStack().isIn(ItemTags.SWORDS)) {
+                if (SwordGap.get() && mc.player.getMainHandStack().getItem() instanceof SwordItem) {
                     if (isClicking) {
                         currentItem = Item.EGap;
                     }
@@ -191,12 +188,12 @@ public class Offhand extends Module {
         }
 
         // Always Gap
-        else if ((mc.player.getMainHandStack().isIn(ItemTags.SWORDS) || mc.player.getMainHandStack().getItem() instanceof AxeItem) && alwaysSwordGap.get()) currentItem = Item.EGap;
+        else if ((mc.player.getMainHandStack().getItem() instanceof SwordItem || mc.player.getMainHandStack().getItem() instanceof AxeItem) && alwaysSwordGap.get()) currentItem = Item.EGap;
 
-        // Potion Click
+            // Potion Click
         else if (potionClick.get()) {
             if (!locked) {
-                if (mc.player.getMainHandStack().isIn(ItemTags.SWORDS)) {
+                if (mc.player.getMainHandStack().getItem() instanceof SwordItem) {
                     if (isClicking) {
                         currentItem = Item.Potion;
                     }
@@ -205,7 +202,7 @@ public class Offhand extends Module {
         }
 
         // Always Pot
-        else if ((mc.player.getMainHandStack().isIn(ItemTags.SWORDS) || mc.player.getMainHandStack().getItem() instanceof AxeItem) && alwaysPot.get()) currentItem = Item.Potion;
+        else if ((mc.player.getMainHandStack().getItem() instanceof SwordItem || mc.player.getMainHandStack().getItem() instanceof AxeItem) && alwaysPot.get()) currentItem = Item.Potion;
 
 
         else currentItem = preferreditem.get();
@@ -238,9 +235,9 @@ public class Offhand extends Module {
     }
 
     @EventHandler
-    private void onMouseClick(MouseClickEvent event) {
+    private void onMouseButton(MouseButtonEvent event) {
         // Detects if the User is right-clicking
-        isClicking = mc.currentScreen == null && !Modules.get().get(AutoTotem.class).isLocked() && !usableItem() && !mc.player.isUsingItem() && event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_RIGHT;
+        isClicking = mc.currentScreen == null && !Modules.get().get(AutoTotem.class).isLocked() && !usableItem() && !mc.player.isUsingItem() && event.action == KeyAction.Press && event.button == GLFW_MOUSE_BUTTON_RIGHT;
     }
 
     private boolean usableItem() {
@@ -248,7 +245,7 @@ public class Offhand extends Module {
         return mc.player.getMainHandStack().getItem() == Items.BOW
             || mc.player.getMainHandStack().getItem() == Items.TRIDENT
             || mc.player.getMainHandStack().getItem() == Items.CROSSBOW
-            || mc.player.getMainHandStack().getItem().getComponents().contains(DataComponentTypes.FOOD);
+            || mc.player.getMainHandStack().getItem().isFood();
     }
 
     @Override
@@ -264,7 +261,7 @@ public class Offhand extends Module {
         Totem(Items.TOTEM_OF_UNDYING),
         Shield(Items.SHIELD),
         Potion(Items.POTION);
-        final net.minecraft.item.Item item;
+        net.minecraft.item.Item item;
         Item(net.minecraft.item.Item item) {
             this.item = item;
         }

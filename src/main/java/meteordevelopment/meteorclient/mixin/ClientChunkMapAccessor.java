@@ -15,5 +15,5 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 @Mixin(ClientChunkManager.ClientChunkMap.class)
 public interface ClientChunkMapAccessor {
     @Accessor("chunks")
-    AtomicReferenceArray<WorldChunk> meteor$getChunks();
+    AtomicReferenceArray<WorldChunk> getChunks();
 }

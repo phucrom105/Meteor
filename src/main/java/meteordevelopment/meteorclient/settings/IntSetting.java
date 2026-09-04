@@ -47,7 +47,7 @@ public class IntSetting extends Setting<Integer> {
 
     @Override
     public Integer load(NbtCompound tag) {
-        set(tag.getInt("value", 0));
+        set(tag.getInt("value"));
 
         return get();
     }

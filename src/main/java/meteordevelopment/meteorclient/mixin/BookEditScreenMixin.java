@@ -6,7 +6,6 @@
 package meteordevelopment.meteorclient.mixin;
 
 import it.unimi.dsi.fastutil.io.FastByteArrayOutputStream;
-import meteordevelopment.meteorclient.MeteorClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.BookEditScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -33,19 +32,13 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public abstract class BookEditScreenMixin extends Screen {
     @Shadow @Final private List<String> pages;
     @Shadow private int currentPage;
-
-    @Shadow
-    protected abstract void updatePage();
-
-    @Shadow
-    protected abstract void openNextPage();
-
-    @Shadow
-    protected abstract void openPreviousPage();
+    @Shadow private boolean dirty;
 
     public BookEditScreenMixin(Text title) {
         super(title);
     }
+
+    @Shadow protected abstract void updateButtons();
 
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo info) {
@@ -63,7 +56,7 @@ public abstract class BookEditScreenMixin extends Screen {
                     try {
                         NbtIo.write(tag, out);
                     } catch (IOException e) {
-                        MeteorClient.LOG.error("Error writing the book to the output stream", e);
+                        e.printStackTrace();
                     }
 
                     try {
@@ -93,36 +86,28 @@ public abstract class BookEditScreenMixin extends Screen {
                     try {
                         NbtCompound tag = NbtIo.readCompressed(in, NbtSizeTracker.ofUnlimitedBytes());
 
-                        NbtList listTag = tag.getListOrEmpty("pages").copy();
+                        NbtList listTag = tag.getList("pages", 8).copy();
 
                         pages.clear();
                         for(int i = 0; i < listTag.size(); ++i) {
-                            pages.add(listTag.getString(i, ""));
+                            pages.add(listTag.getString(i));
                         }
 
                         if (pages.isEmpty()) {
                             pages.add("");
                         }
 
-                        currentPage = tag.getInt("currentPage", 0);
+                        currentPage = tag.getInt("currentPage");
 
-                        updatePage();
+                        dirty = true;
+                        updateButtons();
                     } catch (IOException e) {
-                        MeteorClient.LOG.error("Error reading the data from your clipboard", e);
+                        e.printStackTrace();
                     }
                 })
                 .position(4, 4 + 20 + 2)
                 .size(120, 20)
                 .build()
         );
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        if (verticalAmount == 0) return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
-
-        if (verticalAmount < 0) this.openNextPage();    // scroll down
-        else this.openPreviousPage();                   // scroll up
-        return true;
     }
 }

@@ -8,33 +8,29 @@ package meteordevelopment.meteorclient.systems.modules.combat;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.DirectionAccessor;
 import meteordevelopment.meteorclient.mixin.WorldRendererAccessor;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.entity.DamageUtils;
-import meteordevelopment.meteorclient.utils.player.FindItemResult;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
-import meteordevelopment.meteorclient.utils.player.PlayerUtils;
-import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.*;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
+import meteordevelopment.meteorclient.utils.world.CardinalDirection;
 import meteordevelopment.meteorclient.utils.world.Dir;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.client.render.BlockBreakingInfo;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.EndCrystalEntity;
-import net.minecraft.entity.player.BlockBreakingInfo;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
 import net.minecraft.network.packet.s2c.play.DeathMessageS2CPacket;
 import net.minecraft.util.Hand;
-import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 
@@ -65,14 +61,6 @@ public class Surround extends Module {
         .build()
     );
 
-    private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
-        .name("blocks-per-tick")
-        .description("How many blocks to place in one tick.")
-        .defaultValue(1)
-        .min(1)
-        .build()
-    );
-
     private final Setting<Center> center = sgGeneral.add(new EnumSetting.Builder<Center>()
         .name("center")
         .description("Teleports you to the center of the block.")
@@ -90,13 +78,6 @@ public class Surround extends Module {
     private final Setting<Boolean> onlyOnGround = sgGeneral.add(new BoolSetting.Builder()
         .name("only-on-ground")
         .description("Works only when you are standing on blocks.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
-        .name("air-place")
-        .description("Allows Surround to place blocks in the air.")
         .defaultValue(true)
         .build()
     );
@@ -238,8 +219,11 @@ public class Surround extends Module {
         .build()
     );
 
+    private final BlockPos.Mutable placePos = new BlockPos.Mutable();
+    private final BlockPos.Mutable renderPos = new BlockPos.Mutable();
+    private final BlockPos.Mutable testPos = new BlockPos.Mutable();
     public ArrayList<Module> toActivate = new ArrayList<>();
-    private int timer;
+    private int ticks;
 
     public Surround() {
         super(Categories.Combat, "surround", "Surrounds you in blocks to prevent massive crystal damage.");
@@ -251,23 +235,24 @@ public class Surround extends Module {
     private void onRender3D(Render3DEvent event) {
         if (!render.get()) return;
 
-        BlockPos playerPos = mc.player.getBlockPos();
-
         // Below
-        if (renderBelow.get()) draw(playerPos.down(), event, 0);
+        if (renderBelow.get()) draw(event, null, -1, 0);
 
-        for (Direction direction : DirectionAccessor.meteor$getHorizontal()) {
-            BlockPos renderPos = playerPos.offset(direction);
+        // Regular surround positions
+        for (CardinalDirection direction : CardinalDirection.values()) {
+            draw(event, direction, 0, doubleHeight.get() ? Dir.UP : 0);
+        }
 
-            // Regular surround positions
-            draw(renderPos, event, doubleHeight.get() ? Dir.UP : 0);
-
-            // Double height
-            if (doubleHeight.get()) draw(renderPos.up(), event, Dir.DOWN);
+        // Double height
+        if (doubleHeight.get()) {
+            for (CardinalDirection direction : CardinalDirection.values()) {
+                draw(event, direction, 1, Dir.DOWN);
+            }
         }
     }
 
-    private void draw(BlockPos renderPos, Render3DEvent event, int exclude) {
+    private void draw(Render3DEvent event, CardinalDirection direction, int y, int exclude) {
+        renderPos.set(offsetPosFromPlayer(direction, y));
         Color sideColor = getSideColor(renderPos);
         Color lineColor = getLineColor(renderPos);
         event.renderer.box(renderPos, sideColor, lineColor, shapeMode.get(), exclude);
@@ -281,7 +266,7 @@ public class Surround extends Module {
         if (center.get() == Center.OnActivate) PlayerUtils.centerPlayer();
 
         // Reset delay
-        timer = delay.get();
+        ticks = 0;
 
         if (toggleModules.get() && !modules.get().isEmpty() && mc.world != null && mc.player != null) {
             for (Module module : modules.get()) {
@@ -297,18 +282,26 @@ public class Surround extends Module {
     public void onDeactivate() {
         if (toggleBack.get() && !toActivate.isEmpty() && mc.world != null && mc.player != null) {
             for (Module module : toActivate) {
-                module.enable();
+                if (!module.isActive()) {
+                    module.toggle();
+                }
             }
         }
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        // Delay
-        if (timer++ < delay.get()) return;
+        // Tick the placement timer, should always happen
+        if (ticks > 0) {
+            ticks--;
+            return;
+        }
+        else {
+            ticks = delay.get();
+        }
 
         // Toggle if Y level changed
-        if (toggleOnYChange.get() && mc.player.lastY != mc.player.getY()) {
+        if (toggleOnYChange.get() && mc.player.prevY != mc.player.getY()) {
             toggle();
             return;
         }
@@ -317,44 +310,29 @@ public class Surround extends Module {
         if (onlyOnGround.get() && !mc.player.isOnGround()) return;
 
         // Wait until the player has a block available to place
-        FindItemResult block = InvUtils.findInHotbar(itemStack -> blocks.get().contains(Block.getBlockFromItem(itemStack.getItem())));
-        if (!block.found()) return;
+        if (!getInvBlock().found()) return;
 
         // Centering player
         if (center.get() == Center.Always) PlayerUtils.centerPlayer();
 
-        int placedCount = 0;
-        boolean complete = true;
+        // Check surround blocks in order and place the first missing one if present
+        int safe = 0;
 
-        BlockPos playerPos = mc.player.getBlockPos();
-
-        // Placing feet blocks
-        for (Direction direction : DirectionAccessor.meteor$getHorizontal()) {
-            BlockPos placePos = playerPos.offset(direction);
-
-            // Place support blocks if air place is disabled
-            if (!airPlace.get() && isAirPlace(placePos) && mc.world.getBlockState(placePos).isReplaceable()){
-                if (place(placePos.down(), block) && ++placedCount >= blocksPerTick.get()) break;
-
-                if (mc.world.getBlockState(placePos.down()).isReplaceable()) complete = false;
-            }
-
-            if (place(placePos, block) && ++placedCount >= blocksPerTick.get()) break;
-
-            if (mc.world.getBlockState(placePos).isReplaceable()) complete = false;
+        // Looping through feet blocks
+        for (CardinalDirection direction : CardinalDirection.values()) {
+            if (place(direction, 0)) break;
+            safe++;
         }
 
-        // Placing head blocks
-        if (doubleHeight.get() && complete) {
-            for (Direction direction : DirectionAccessor.meteor$getHorizontal()) {
-                BlockPos placePos = playerPos.offset(direction).up();
-                if (place(placePos, block) && ++placedCount >= blocksPerTick.get()) break;
-
-                if (mc.world.getBlockState(placePos).isReplaceable()) complete = false;
+        // Looping through head blocks
+        if (doubleHeight.get() && safe == 4) {
+            for (CardinalDirection direction : CardinalDirection.values()) {
+                if (place(direction, 1)) break;
+                safe++;
             }
         }
 
-        timer = 0;
+        boolean complete = safe == (doubleHeight.get() ? 8 : 4);
 
         // Disable if all the surround blocks are placed
         if (complete && toggleOnComplete.get()) {
@@ -366,13 +344,22 @@ public class Surround extends Module {
         if (!complete && center.get() == Center.Incomplete) PlayerUtils.centerPlayer();
     }
 
-    private boolean place(BlockPos placePos, FindItemResult block) {
+    private boolean place(CardinalDirection direction, int y) {
+        placePos.set(offsetPosFromPlayer(direction, y));
+
         // Attempt to place
-        boolean placed = BlockUtils.place(placePos, block, rotate.get(), 100, swing.get(), true);
+        boolean placed = BlockUtils.place(
+            placePos,
+            getInvBlock(),
+            rotate.get(),
+            100,
+            swing.get(),
+            true
+        );
 
         // Check if the block is being mined
         boolean beingMined = false;
-        for (BlockBreakingInfo value : ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos().values()) {
+        for (BlockBreakingInfo value : ((WorldRendererAccessor) mc.worldRenderer).getBlockBreakingInfos().values()) {
             if (value.getPos().equals(placePos)) {
                 beingMined = true;
                 break;
@@ -388,7 +375,7 @@ public class Surround extends Module {
                 placePos.getX() + 1, placePos.getY() + 1, placePos.getZ() + 1
             );
 
-            Predicate<Entity> entityPredicate = entity -> entity instanceof EndCrystalEntity && DamageUtils.crystalDamage(mc.player, entity.getEntityPos()) < PlayerUtils.getTotalHealth();
+            Predicate<Entity> entityPredicate = entity -> entity instanceof EndCrystalEntity && DamageUtils.crystalDamage(mc.player, entity.getPos()) < PlayerUtils.getTotalHealth();
 
             for (Entity crystal : mc.world.getOtherEntities(null, box, entityPredicate)) {
                 if (rotate.get()) {
@@ -410,12 +397,32 @@ public class Surround extends Module {
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event)  {
         if (event.packet instanceof DeathMessageS2CPacket packet) {
-            Entity entity = mc.world.getEntityById(packet.playerId());
+            Entity entity = mc.world.getEntityById(packet.getEntityId());
             if (entity == mc.player && toggleOnDeath.get()) {
                 toggle();
                 info("Toggled off because you died.");
             }
         }
+    }
+
+    private BlockPos.Mutable offsetPosFromPlayer(CardinalDirection direction, int y) {
+        return offsetPos(mc.player.getBlockPos(), direction, y);
+    }
+
+    private BlockPos.Mutable offsetPos(BlockPos origin, CardinalDirection direction, int y) {
+        if (direction == null) {
+            return testPos.set(
+                origin.getX(),
+                origin.getY() + y,
+                origin.getZ()
+            );
+        }
+
+        return testPos.set(
+            origin.getX() + direction.toDirection().getOffsetX(),
+            origin.getY() + y,
+            origin.getZ() + direction.toDirection().getOffsetZ()
+        );
     }
 
     private BlockType getBlockType(BlockPos pos) {
@@ -445,15 +452,16 @@ public class Surround extends Module {
         };
     }
 
-    private boolean isAirPlace(BlockPos blockPos) {
-        for (Direction direction : Direction.values()) {
-            if (!mc.world.getBlockState(blockPos.offset(direction)).isReplaceable()) return false;
-        }
-        return true;
+    private FindItemResult getInvBlock() {
+        return InvUtils.findInHotbar(itemStack -> blocks.get().contains(Block.getBlockFromItem(itemStack.getItem())));
     }
 
     private boolean blockFilter(Block block) {
-        return block.getBlastResistance() >= 600 && block.getHardness() >= 0 && block != Blocks.REINFORCED_DEEPSLATE;
+        return block == Blocks.OBSIDIAN ||
+            block == Blocks.CRYING_OBSIDIAN ||
+            block == Blocks.NETHERITE_BLOCK ||
+            block == Blocks.ENDER_CHEST ||
+            block == Blocks.RESPAWN_ANCHOR;
     }
 
     public enum Center {

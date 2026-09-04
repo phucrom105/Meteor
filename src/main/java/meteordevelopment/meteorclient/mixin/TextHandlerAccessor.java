@@ -12,5 +12,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(TextHandler.class)
 public interface TextHandlerAccessor {
     @Accessor("widthRetriever")
-    TextHandler.WidthRetriever meteor$getWidthRetriever();
+    TextHandler.WidthRetriever getWidthRetriever();
 }

@@ -5,6 +5,7 @@
 
 package meteordevelopment.meteorclient.utils;
 
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.addons.AddonManager;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import org.reflections.Reflections;
@@ -19,10 +20,9 @@ import java.util.stream.Collectors;
 public class ReflectInit {
     private static final List<Reflections> reflections = new ArrayList<>();
 
-    private ReflectInit() {
-    }
-
     public static void registerPackages() {
+        add(MeteorClient.ADDON);
+
         for (MeteorAddon addon : AddonManager.ADDONS) {
             try {
                 add(addon);
@@ -46,7 +46,7 @@ public class ReflectInit {
             Map<Class<?>, List<Method>> byClass = initTasks.stream().collect(Collectors.groupingBy(Method::getDeclaringClass));
             Set<Method> left = new HashSet<>(initTasks);
 
-            for (Method m; (m = left.stream().findAny().orElse(null)) != null; ) {
+            for (Method m; (m = left.stream().findAny().orElse(null)) != null;) {
                 reflectInit(m, annotation, left, byClass);
             }
         }
@@ -75,10 +75,13 @@ public class ReflectInit {
     private static <T extends Annotation> Class<?>[] getDependencies(Method task, Class<T> annotation) {
         T init = task.getAnnotation(annotation);
 
-        return switch (init) {
-            case PreInit pre -> pre.dependencies();
-            case PostInit post -> post.dependencies();
-            default -> new Class<?>[]{};
-        };
+        if (init instanceof PreInit pre) {
+            return pre.dependencies();
+        }
+        else if (init instanceof PostInit post) {
+            return post.dependencies();
+        }
+
+        return new Class<?>[]{};
     }
 }

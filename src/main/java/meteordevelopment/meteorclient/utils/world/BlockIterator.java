@@ -5,7 +5,6 @@
 
 package meteordevelopment.meteorclient.utils.world;
 
-import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.utils.PreInit;
@@ -16,6 +15,8 @@ import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
 
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.function.BiConsumer;
 
@@ -23,17 +24,14 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class BlockIterator {
     private static final Pool<Callback> callbackPool = new Pool<>(Callback::new);
-    private static final List<Callback> callbacks = new ReferenceArrayList<>();
+    private static final List<Callback> callbacks = new ArrayList<>();
 
-    private static final List<Runnable> afterCallbacks = new ReferenceArrayList<>();
+    private static final List<Runnable> afterCallbacks = new ArrayList<>();
 
     private static final BlockPos.Mutable blockPos = new BlockPos.Mutable();
     private static int hRadius, vRadius;
 
     private static boolean disableCurrent;
-
-    private BlockIterator() {
-    }
 
     @PreInit
     public static void init() {
@@ -51,7 +49,7 @@ public class BlockIterator {
         for (int x = px - hRadius; x <= px + hRadius; x++) {
             for (int z = pz - hRadius; z <= pz + hRadius; z++) {
                 for (int y = Math.max(mc.world.getBottomY(), py - vRadius); y <= py + vRadius; y++) {
-                    if (y > mc.world.getHeight()) break;
+                    if (y > mc.world.getTopY()) break;
 
                     blockPos.set(x, y, z);
                     BlockState blockState = mc.world.getBlockState(blockPos);
@@ -60,14 +58,15 @@ public class BlockIterator {
                     int dy = Math.abs(y - py);
                     int dz = Math.abs(z - pz);
 
-                    callbacks.removeIf(callback -> {
+                    for (Iterator<Callback> it = callbacks.iterator(); it.hasNext(); ) {
+                        Callback callback = it.next();
+
                         if (dx <= callback.hRadius && dy <= callback.vRadius && dz <= callback.hRadius) {
                             disableCurrent = false;
                             callback.function.accept(blockPos, blockState);
-                            return disableCurrent;
+                            if (disableCurrent) it.remove();
                         }
-                        return false;
-                    });
+                    }
                 }
             }
         }
@@ -75,7 +74,7 @@ public class BlockIterator {
         hRadius = 0;
         vRadius = 0;
 
-        callbackPool.freeAll(callbacks);
+        for (Callback callback : callbacks) callbackPool.free(callback);
         callbacks.clear();
 
         for (Runnable callback : afterCallbacks) callback.run();

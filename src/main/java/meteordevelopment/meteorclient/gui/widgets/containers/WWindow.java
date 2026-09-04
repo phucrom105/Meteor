@@ -10,7 +10,6 @@ import meteordevelopment.meteorclient.gui.utils.Cell;
 import meteordevelopment.meteorclient.gui.utils.WindowConfig;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WTriangle;
-import net.minecraft.client.gui.Click;
 import net.minecraft.util.math.MathHelper;
 
 import java.util.function.Consumer;
@@ -189,9 +188,9 @@ public abstract class WWindow extends WVerticalList {
         }
 
         @Override
-        public boolean onMouseClicked(Click click, boolean doubled) {
-            if (mouseOver && !doubled) {
-                if (click.button() == GLFW_MOUSE_BUTTON_RIGHT) setExpanded(!expanded);
+        public boolean onMouseClicked(double mouseX, double mouseY, int button, boolean used) {
+            if (mouseOver && !used) {
+                if (button == GLFW_MOUSE_BUTTON_RIGHT) setExpanded(!expanded);
                 else {
                     dragging = true;
                     dragged = false;
@@ -204,7 +203,7 @@ public abstract class WWindow extends WVerticalList {
         }
 
         @Override
-        public boolean onMouseReleased(Click click) {
+        public boolean onMouseReleased(double mouseX, double mouseY, int button) {
             if (dragging) {
                 dragging = false;
 

@@ -7,10 +7,10 @@ package meteordevelopment.meteorclient.mixin;
 
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.AutoReconnect;
+import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.screen.DisconnectedScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
-import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.DirectionalLayoutWidget;
 import net.minecraft.text.Text;
@@ -21,6 +21,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -36,11 +37,11 @@ public abstract class DisconnectedScreenMixin extends Screen {
         super(title);
     }
 
-    @Inject(method = "init", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/widget/DirectionalLayoutWidget;refreshPositions()V", shift = At.Shift.BEFORE))
-    private void addButtons(CallbackInfo ci) {
+    @Inject(method = "init", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/widget/DirectionalLayoutWidget;refreshPositions()V", shift = At.Shift.BEFORE), locals = LocalCapture.CAPTURE_FAILHARD)
+    private void addButtons(CallbackInfo ci, ButtonWidget buttonWidget) {
         AutoReconnect autoReconnect = Modules.get().get(AutoReconnect.class);
 
-        if (autoReconnect.lastServerConnection != null && !autoReconnect.button.get()) {
+        if (autoReconnect.lastServerConnection != null) {
             reconnectBtn = new ButtonWidget.Builder(Text.literal(getText()), button -> tryConnecting()).build();
             grid.add(reconnectBtn);
 
@@ -77,6 +78,6 @@ public abstract class DisconnectedScreenMixin extends Screen {
     @Unique
     private void tryConnecting() {
         var lastServer = Modules.get().get(AutoReconnect.class).lastServerConnection;
-        ConnectScreen.connect(new TitleScreen(), mc, lastServer.left(), lastServer.right(), false, null);
+        ConnectScreen.connect(new TitleScreen(), mc, lastServer.left(), lastServer.right(), false);
     }
 }

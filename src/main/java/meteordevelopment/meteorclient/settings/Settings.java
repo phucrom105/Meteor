@@ -9,12 +9,12 @@ import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.containers.WContainer;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.ISerializable;
+import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import meteordevelopment.meteorclient.utils.render.color.RainbowColors;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -22,8 +22,6 @@ import java.util.List;
 
 public class Settings implements ISerializable<Settings>, Iterable<SettingGroup> {
     private SettingGroup defaultGroup;
-    private boolean invalidate;
-
     public final List<SettingGroup> groups = new ArrayList<>(1);
 
     public void onActivated() {
@@ -44,31 +42,12 @@ public class Settings implements ISerializable<Settings>, Iterable<SettingGroup>
         return null;
     }
 
-    @SuppressWarnings("unchecked")
-    public <T> Setting<T> get(String name, Class<T> tClass) {
-        for (SettingGroup sg : this) {
-            for (Setting<?> setting : sg) {
-                Class<?> sClass = setting.getDefaultValue().getClass();
-                if (name.equalsIgnoreCase(setting.name) && tClass.equals(sClass))
-                    return (Setting<T>) setting;
-            }
-        }
-
-        return null;
-    }
-
     public void reset() {
         for (SettingGroup group : groups) {
             for (Setting<?> setting : group) {
                 setting.reset();
             }
         }
-
-        invalidate();
-    }
-
-    public void invalidate() {
-        invalidate = true;
     }
 
     public SettingGroup getGroup(String name) {
@@ -97,7 +76,6 @@ public class Settings implements ISerializable<Settings>, Iterable<SettingGroup>
         return createGroup(name, true);
     }
 
-    @SuppressWarnings("unchecked")
     public void registerColorSettings(Module module) {
         for (SettingGroup group : this) {
             for (Setting<?> setting : group) {
@@ -113,7 +91,6 @@ public class Settings implements ISerializable<Settings>, Iterable<SettingGroup>
         }
     }
 
-    @SuppressWarnings("unchecked")
     public void unregisterColorSettings() {
         for (SettingGroup group : this) {
             for (Setting<?> setting : group) {
@@ -128,29 +105,22 @@ public class Settings implements ISerializable<Settings>, Iterable<SettingGroup>
     }
 
     public void tick(WContainer settings, GuiTheme theme) {
-        if (settings == null) return;
-
         for (SettingGroup group : groups) {
             for (Setting<?> setting : group) {
                 boolean visible = setting.isVisible();
 
                 if (visible != setting.lastWasVisible) {
-                    invalidate();
+                    settings.clear();
+                    settings.add(theme.settings(this)).expandX();
                 }
 
                 setting.lastWasVisible = visible;
             }
         }
-
-        if (invalidate) {
-            settings.clear();
-            settings.add(theme.settings(this)).expandX();
-            invalidate = false;
-        }
     }
 
     @Override
-    public @NotNull Iterator<SettingGroup> iterator() {
+    public Iterator<SettingGroup> iterator() {
         return groups.iterator();
     }
 
@@ -158,25 +128,19 @@ public class Settings implements ISerializable<Settings>, Iterable<SettingGroup>
     public NbtCompound toTag() {
         NbtCompound tag = new NbtCompound();
 
-        NbtList groupsTag = new NbtList();
-        for (SettingGroup group : groups) {
-            if (group.wasChanged()) groupsTag.add(group.toTag());
-        }
-        if (!groupsTag.isEmpty()) tag.put("groups", groupsTag);
+        tag.put("groups", NbtUtils.listToTag(groups));
 
         return tag;
     }
 
     @Override
     public Settings fromTag(NbtCompound tag) {
-        reset();
-
-        NbtList groupsTag = tag.getListOrEmpty("groups");
+        NbtList groupsTag = tag.getList("groups", 10);
 
         for (NbtElement t : groupsTag) {
             NbtCompound groupTag = (NbtCompound) t;
 
-            SettingGroup sg = getGroup(groupTag.getString("name", ""));
+            SettingGroup sg = getGroup(groupTag.getString("name"));
             if (sg != null) sg.fromTag(groupTag);
         }
 

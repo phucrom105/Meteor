@@ -13,5 +13,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(EntityTrackingSection.class)
 public interface EntityTrackingSectionAccessor {
     @Accessor("collection")
-    <T> TypeFilterableList<T> meteor$getCollection();
+    <T> TypeFilterableList<T> getCollection();
 }

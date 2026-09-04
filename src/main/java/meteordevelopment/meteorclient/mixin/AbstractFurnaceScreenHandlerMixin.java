@@ -17,7 +17,7 @@ public abstract class AbstractFurnaceScreenHandlerMixin implements IAbstractFurn
     protected abstract boolean isSmeltable(ItemStack itemStack);
 
     @Override
-    public boolean meteor$isItemSmeltable(ItemStack itemStack) {
+    public boolean isItemSmeltable(ItemStack itemStack) {
         return isSmeltable(itemStack);
     }
 }

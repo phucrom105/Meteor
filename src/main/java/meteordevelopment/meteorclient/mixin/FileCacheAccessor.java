@@ -13,6 +13,6 @@ import java.nio.file.Path;
 
 @Mixin(PlayerSkinProvider.FileCache.class)
 public interface FileCacheAccessor {
-    @Accessor("directory")
-    Path meteor$getDirectory();
+    @Accessor
+    Path getDirectory();
 }

@@ -8,10 +8,6 @@ package meteordevelopment.meteorclient.gui.widgets;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.gui.utils.BaseWidget;
-import meteordevelopment.meteorclient.gui.widgets.containers.WView;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.input.CharInput;
-import net.minecraft.client.input.KeyInput;
 
 public abstract class WWidget implements BaseWidget {
     public boolean visible = true;
@@ -25,8 +21,6 @@ public abstract class WWidget implements BaseWidget {
     public String tooltip;
 
     public boolean mouseOver;
-    public boolean focused;
-    protected boolean instantTooltips;
     protected double mouseOverTimer;
 
     public void init() {}
@@ -79,11 +73,7 @@ public abstract class WWidget implements BaseWidget {
 
         if (isOver(mouseX, mouseY)) {
             mouseOverTimer += delta;
-
-            if ((instantTooltips || mouseOverTimer >= 1) && tooltip != null) {
-                WView view = getView();
-                if (view == null || view.mouseOver) renderer.tooltip(tooltip);
-            }
+            if (mouseOverTimer >= 1 && tooltip != null) renderer.tooltip(tooltip);
         }
         else {
             mouseOverTimer = 0;
@@ -97,15 +87,15 @@ public abstract class WWidget implements BaseWidget {
 
     // Events
 
-    public boolean mouseClicked(Click click, boolean doubled) {
-        return onMouseClicked(click, doubled);
+    public boolean mouseClicked(double mouseX, double mouseY, int button, boolean used) {
+        return onMouseClicked(mouseX, mouseY, button, used);
     }
-    public boolean onMouseClicked(Click click, boolean doubled) { return false; }
+    public boolean onMouseClicked(double mouseX, double mouseY, int button, boolean used) { return false; }
 
-    public boolean mouseReleased(Click click) {
-        return onMouseReleased(click);
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        return onMouseReleased(mouseX, mouseY, button);
     }
-    public boolean onMouseReleased(Click click) { return false; }
+    public boolean onMouseReleased(double mouseX, double mouseY, int button) { return false; }
 
     public void mouseMoved(double mouseX, double mouseY, double lastMouseX, double lastMouseY) {
         mouseOver = isOver(mouseX, mouseY);
@@ -118,20 +108,20 @@ public abstract class WWidget implements BaseWidget {
     }
     public boolean onMouseScrolled(double amount) { return false; }
 
-    public boolean keyPressed(KeyInput input) {
-        return onKeyPressed(input);
+    public boolean keyPressed(int key, int mods) {
+        return onKeyPressed(key, mods);
     }
-    public boolean onKeyPressed(KeyInput input) { return false; }
+    public boolean onKeyPressed(int key, int mods) { return false; }
 
-    public boolean keyRepeated(KeyInput input) {
-        return onKeyRepeated(input);
+    public boolean keyRepeated(int key, int mods) {
+        return onKeyRepeated(key, mods);
     }
-    public boolean onKeyRepeated(KeyInput input) { return false; }
+    public boolean onKeyRepeated(int key, int mods) { return false; }
 
-    public boolean charTyped(CharInput input) {
-        return onCharTyped(input);
+    public boolean charTyped(char c) {
+        return onCharTyped(c);
     }
-    public boolean onCharTyped(CharInput input) { return false; }
+    public boolean onCharTyped(char c) { return false; }
 
     // Other
 
@@ -144,19 +134,7 @@ public abstract class WWidget implements BaseWidget {
         return parent != null ? parent.getRoot() : (this instanceof WRoot ? this : null);
     }
 
-    public WView getView() {
-        return this instanceof WView ? (WView) this : (parent != null ? parent.getView() : null);
-    }
-
     public boolean isOver(double x, double y) {
         return x >= this.x && x <= this.x + width && y >= this.y && y <= this.y + height;
-    }
-
-    public boolean isFocused() {
-        return focused;
-    }
-
-    public void setFocused(boolean focused) {
-        if (this.focused != focused) this.focused = focused;
     }
 }

@@ -93,4 +93,8 @@ public class CameraTweaks extends Module {
     public boolean clip() {
         return isActive() && clip.get();
     }
+
+    public double getDistance() {
+        return isActive() ? distance : 4;
+    }
 }

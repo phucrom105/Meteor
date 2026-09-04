@@ -15,9 +15,6 @@ import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
@@ -54,16 +51,10 @@ public abstract class System<T> implements ISerializable<T> {
             if (folder != null) file = new File(folder, file.getName());
 
             file.getParentFile().mkdirs();
-
-            try {
-                Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                StreamUtils.copy(tempFile, file);
-            }
-
+            StreamUtils.copy(tempFile, file);
             tempFile.delete();
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error saving {}. Possibly corrupted?", this.name, e);
+            e.printStackTrace();
         }
     }
 
@@ -84,19 +75,14 @@ public abstract class System<T> implements ISerializable<T> {
                 } catch (CrashException e) {
                     String backupName = FilenameUtils.removeExtension(file.getName()) + "-" + ZonedDateTime.now().format(DATE_TIME_FORMATTER) + ".backup.nbt";
                     File backup = new File(file.getParentFile(), backupName);
-
-                    try {
-                        Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                    } catch (AtomicMoveNotSupportedException ex) {
-                        StreamUtils.copy(file, backup);
-                    }
-
-                    MeteorClient.LOG.error("Error loading {}. Possibly corrupted?", this.name, e);
-                    MeteorClient.LOG.info("Saved settings backup to '{}'.", backup);
+                    StreamUtils.copy(file, backup);
+                    MeteorClient.LOG.error("Error loading " + this.name + ". Possibly corrupted?");
+                    MeteorClient.LOG.info("Saved settings backup to '" + backup + "'.");
+                    e.printStackTrace();
                 }
             }
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error loading {}. Possibly corrupted?", this.name, e);
+            e.printStackTrace();
         }
     }
 

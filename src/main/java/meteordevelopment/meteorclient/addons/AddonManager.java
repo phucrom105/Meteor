@@ -58,8 +58,6 @@ public class AddonManager {
             for (Person author : metadata.getAuthors()) {
                 MeteorClient.ADDON.authors[i++] = author.getName();
             }
-
-            ADDONS.add(MeteorClient.ADDON);
         }
 
         // Addons

@@ -58,7 +58,7 @@ public class ColorListSetting extends Setting<List<SettingColor>> {
     protected List<SettingColor> load(NbtCompound tag) {
         get().clear();
 
-        for (NbtElement e : tag.getListOrEmpty("value")) {
+        for (NbtElement e : tag.getList("value", NbtElement.COMPOUND_TYPE)) {
             get().add(new SettingColor().fromTag((NbtCompound) e));
         }
 

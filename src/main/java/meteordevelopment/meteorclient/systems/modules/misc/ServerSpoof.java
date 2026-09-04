@@ -5,17 +5,16 @@
 
 package meteordevelopment.meteorclient.systems.modules.misc;
 
+import io.netty.buffer.Unpooled;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.misc.text.RunnableClickEvent;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.packet.BrandCustomPayload;
 import net.minecraft.network.packet.c2s.common.CustomPayloadC2SPacket;
-import net.minecraft.network.packet.c2s.common.ResourcePackStatusC2SPacket;
 import net.minecraft.network.packet.s2c.common.ResourcePackSendS2CPacket;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.HoverEvent;
@@ -23,12 +22,8 @@ import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
-import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.StringUtils;
 
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.List;
 
 public class ServerSpoof extends Module {
@@ -66,103 +61,57 @@ public class ServerSpoof extends Module {
     private final Setting<List<String>> channels = sgGeneral.add(new StringListSetting.Builder()
         .name("channels")
         .description("If the channel contains the keyword, this outgoing channel will be blocked.")
-        .defaultValue("fabric", "minecraft:register")
+        .defaultValue("minecraft:register")
         .visible(blockChannels::get)
         .build()
     );
 
-    private MutableText msg;
-    public boolean silentAcceptResourcePack = false;
-
     public ServerSpoof() {
         super(Categories.Misc, "server-spoof", "Spoof client brand, resource pack and channels.");
 
-        runInMainMenu = true;
+        MeteorClient.EVENT_BUS.subscribe(new Listener());
     }
 
-    @EventHandler
-    private void onPacketSend(PacketEvent.Send event) {
-        if (!isActive()) return;
+    private class Listener {
+        @EventHandler
+        private void onPacketSend(PacketEvent.Send event) {
+            if (!isActive()) return;
+            if (!(event.packet instanceof CustomPayloadC2SPacket)) return;
+            Identifier id = ((CustomPayloadC2SPacket) event.packet).payload().id();
 
-        if (event.packet instanceof CustomPayloadC2SPacket) {
-            Identifier id = ((CustomPayloadC2SPacket) event.packet).payload().getId().id();
+            if (spoofBrand.get() && id.equals(BrandCustomPayload.ID))
+                event.packet.write(new PacketByteBuf(Unpooled.buffer()).writeString(brand.get()));
 
             if (blockChannels.get()) {
                 for (String channel : channels.get()) {
-                    if (Strings.CI.contains(id.toString(), channel)) {
+                    if (StringUtils.containsIgnoreCase(channel, id.toString())) {
                         event.cancel();
                         return;
                     }
                 }
             }
-
-            if (spoofBrand.get() && id.equals(BrandCustomPayload.ID.id())) {
-                CustomPayloadC2SPacket spoofedPacket = new CustomPayloadC2SPacket(new BrandCustomPayload(brand.get()));
-
-                event.sendSilently(spoofedPacket);
-                event.cancel();
-            }
         }
 
-        // we want to accept the pack silently to prevent the server detecting you bypassed it when logging in
-        if (silentAcceptResourcePack && event.packet instanceof ResourcePackStatusC2SPacket) event.cancel();
-    }
+        @EventHandler
+        private void onPacketRecieve(PacketEvent.Receive event) {
+            if (!isActive()) return;
 
-    @EventHandler
-    private void onPacketReceive(PacketEvent.Receive event) {
-        if (!isActive() || !resourcePack.get()) return;
-        if (!(event.packet instanceof ResourcePackSendS2CPacket packet)) return;
-
-        event.cancel();
-        event.connection.send(new ResourcePackStatusC2SPacket(packet.id(), ResourcePackStatusC2SPacket.Status.ACCEPTED));
-        event.connection.send(new ResourcePackStatusC2SPacket(packet.id(), ResourcePackStatusC2SPacket.Status.DOWNLOADED));
-        event.connection.send(new ResourcePackStatusC2SPacket(packet.id(), ResourcePackStatusC2SPacket.Status.SUCCESSFULLY_LOADED));
-
-        msg = Text.literal("This server has ");
-        msg.append(packet.required() ? "a required " : "an optional ").append("resource pack. ");
-
-        MutableText link = Text.literal("[Open URL]");
-        link.setStyle(link.getStyle()
-            .withColor(Formatting.BLUE)
-            .withUnderline(true)
-            .withClickEvent(new ClickEvent.OpenUrl(URI.create(packet.url())))
-            .withHoverEvent(new HoverEvent.ShowText(Text.literal("Click to open the pack url")))
-        );
-
-        MutableText acceptance = Text.literal("[Accept Pack]");
-        acceptance.setStyle(acceptance.getStyle()
-            .withColor(Formatting.DARK_GREEN)
-            .withUnderline(true)
-            .withClickEvent(new RunnableClickEvent(() -> {
-                URL url = getParsedResourcePackUrl(packet.url());
-                if (url == null) error("Invalid resource pack URL: " + packet.url());
-                else {
-                    silentAcceptResourcePack = true;
-                    mc.getServerResourcePackProvider().addResourcePack(packet.id(), url, packet.hash());
-                }
-            }))
-            .withHoverEvent(new HoverEvent.ShowText(Text.literal("Click to accept and apply the pack.")))
-        );
-
-        msg.append(link).append(" ");
-        msg.append(acceptance).append(".");
-    }
-
-    @EventHandler
-    private void onTick(TickEvent.Pre event) {
-        if (!isActive() || !Utils.canUpdate() || msg == null) return;
-
-        info(msg);
-        msg = null;
-    }
-
-    private static URL getParsedResourcePackUrl(String url) {
-        try {
-            URL uRL = new URI(url).toURL();
-            String string = uRL.getProtocol();
-            return !"http".equals(string) && !"https".equals(string) ? null : uRL;
-        } catch (MalformedURLException | URISyntaxException var3) {
-            return null;
+            if (resourcePack.get()) {
+                if (!(event.packet instanceof ResourcePackSendS2CPacket packet)) return;
+                event.cancel();
+                MutableText msg = Text.literal("This server has ");
+                msg.append(packet.required() ? "a required " : "an optional ");
+                MutableText link = Text.literal("resource pack");
+                link.setStyle(link.getStyle()
+                    .withColor(Formatting.BLUE)
+                    .withUnderline(true)
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, packet.url()))
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal("Click to download")))
+                );
+                msg.append(link);
+                msg.append(".");
+                info(msg);
+            }
         }
     }
 }

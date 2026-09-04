@@ -5,19 +5,18 @@
 
 package meteordevelopment.meteorclient.renderer.text;
 
-import meteordevelopment.meteorclient.renderer.MeshBuilder;
-import meteordevelopment.meteorclient.renderer.MeshRenderer;
-import meteordevelopment.meteorclient.renderer.MeteorRenderPipelines;
+import meteordevelopment.meteorclient.renderer.*;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.util.math.MatrixStack;
+import org.lwjgl.BufferUtils;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class CustomTextRenderer implements TextRenderer {
     public static final Color SHADOW_COLOR = new Color(60, 60, 60, 180);
 
-    private final MeshBuilder mesh = new MeshBuilder(MeteorRenderPipelines.UI_TEXT);
+    private final Mesh mesh = new ShaderMesh(Shaders.TEXT, DrawMode.Triangles, Mesh.Attrib.Vec2, Mesh.Attrib.Vec2, Mesh.Attrib.Color);
 
     public final FontFace fontFace;
 
@@ -29,10 +28,11 @@ public class CustomTextRenderer implements TextRenderer {
     private double fontScale = 1;
     private double scale = 1;
 
-    public CustomTextRenderer(FontFace fontFace) throws IOException {
+    public CustomTextRenderer(FontFace fontFace) {
         this.fontFace = fontFace;
 
-        ByteBuffer buffer = fontFace.readToDirectByteBuffer();
+        byte[] bytes = Utils.readBytes(fontFace.toStream());
+        ByteBuffer buffer = BufferUtils.createByteBuffer(bytes.length).put(bytes).flip();
 
         fonts = new Font[5];
         for (int i = 0; i < fonts.length; i++) {
@@ -117,18 +117,14 @@ public class CustomTextRenderer implements TextRenderer {
     }
 
     @Override
-    public void end() {
+    public void end(MatrixStack matrices) {
         if (!building) throw new RuntimeException("CustomTextRenderer.end() called without calling begin()");
 
         if (!scaleOnly) {
             mesh.end();
 
-            MeshRenderer.begin()
-                .attachments(MinecraftClient.getInstance().getFramebuffer())
-                .pipeline(MeteorRenderPipelines.UI_TEXT)
-                .mesh(mesh)
-                .sampler("u_Texture", font.texture.getGlTextureView(), font.texture.getSampler())
-                .end();
+            GL.bindTexture(font.texture.getGlId());
+            mesh.render(matrices);
         }
 
         building = false;
@@ -136,8 +132,6 @@ public class CustomTextRenderer implements TextRenderer {
     }
 
     public void destroy() {
-        for (Font font : this.fonts) {
-            font.texture.close();
-        }
+        mesh.destroy();
     }
 }

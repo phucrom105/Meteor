@@ -8,19 +8,18 @@ package meteordevelopment.meteorclient.renderer.text;
 import com.mojang.blaze3d.systems.RenderSystem;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.client.font.TextRenderer.TextLayerType;
+import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.BufferAllocator;
 import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
-import org.joml.Matrix4fStack;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class VanillaTextRenderer implements TextRenderer {
     public static final VanillaTextRenderer INSTANCE = new VanillaTextRenderer();
 
-    private final BufferAllocator buffer = new BufferAllocator(2048);
+    private final BufferBuilder buffer = new BufferBuilder(2048);
     private final VertexConsumerProvider.Immediate immediate = VertexConsumerProvider.immediate(buffer);
 
     private final MatrixStack matrices = new MatrixStack();
@@ -71,7 +70,7 @@ public class VanillaTextRenderer implements TextRenderer {
         y += 0.5 * scale;
 
         int preA = color.a;
-        color.a = (int) (((double) color.a / 255 * alpha) * 255);
+        color.a = (int) ((color.a / 255 * alpha) * 255);
 
         Matrix4f matrix = emptyMatrix;
         if (scaleIndividually) {
@@ -80,8 +79,7 @@ public class VanillaTextRenderer implements TextRenderer {
             matrix = matrices.peek().getPositionMatrix();
         }
 
-        mc.textRenderer.draw(text, (float) (x / scale), (float) (y / scale), color.getPacked(), shadow, matrix, immediate, TextLayerType.NORMAL, 0, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        double x2 = (x / scale) + mc.textRenderer.getWidth(text);
+        double x2 = mc.textRenderer.draw(text, (float) (x / scale), (float) (y / scale), color.getPacked(), shadow, matrix, immediate, TextLayerType.NORMAL, 0, LightmapTextureManager.MAX_LIGHT_COORDINATE);
 
         if (scaleIndividually) matrices.pop();
 
@@ -97,17 +95,22 @@ public class VanillaTextRenderer implements TextRenderer {
     }
 
     @Override
-    public void end() {
+    public void end(MatrixStack matrices) {
         if (!building) throw new RuntimeException("VanillaTextRenderer.end() called without calling begin()");
 
-        Matrix4fStack matrixStack = RenderSystem.getModelViewStack();
+        MatrixStack matrixStack = RenderSystem.getModelViewStack();
 
-        matrixStack.pushMatrix();
+        RenderSystem.disableDepthTest();
+        matrixStack.push();
+        if (matrices != null) matrixStack.multiplyPositionMatrix(matrices.peek().getPositionMatrix());
         if (!scaleIndividually) matrixStack.scale((float) scale, (float) scale, 1);
+        RenderSystem.applyModelViewMatrix();
 
         immediate.draw();
 
-        matrixStack.popMatrix();
+        matrixStack.pop();
+        RenderSystem.enableDepthTest();
+        RenderSystem.applyModelViewMatrix();
 
         this.scale = 2;
         this.building = false;

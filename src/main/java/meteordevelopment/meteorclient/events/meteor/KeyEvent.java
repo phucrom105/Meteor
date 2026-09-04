@@ -7,26 +7,18 @@ package meteordevelopment.meteorclient.events.meteor;
 
 import meteordevelopment.meteorclient.events.Cancellable;
 import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
-import net.minecraft.client.input.KeyInput;
 
 public class KeyEvent extends Cancellable {
     private static final KeyEvent INSTANCE = new KeyEvent();
 
-    public KeyInput input;
+    public int key, modifiers;
     public KeyAction action;
 
-    public static KeyEvent get(KeyInput input, KeyAction action) {
+    public static KeyEvent get(int key, int modifiers, KeyAction action) {
         INSTANCE.setCancelled(false);
-        INSTANCE.input = input;
+        INSTANCE.key = key;
+        INSTANCE.modifiers = modifiers;
         INSTANCE.action = action;
         return INSTANCE;
-    }
-
-    public int key() {
-        return INSTANCE.input.key();
-    }
-
-    public int modifiers() {
-        return INSTANCE.input.modifiers();
     }
 }

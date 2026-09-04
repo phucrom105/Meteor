@@ -5,13 +5,14 @@
 
 package meteordevelopment.meteorclient.systems.hud.elements;
 
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.misc.MeteorIdentifier;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.item.ItemStack;
@@ -23,12 +24,10 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class InventoryHud extends HudElement {
     public static final HudElementInfo<InventoryHud> INFO = new HudElementInfo<>(Hud.GROUP, "inventory", "Displays your inventory.", InventoryHud::new);
 
-    private static final Identifier TEXTURE = MeteorClient.identifier("textures/container.png");
-    private static final Identifier TEXTURE_TRANSPARENT = MeteorClient.identifier("textures/container-transparent.png");
+    private static final Identifier TEXTURE = new MeteorIdentifier("textures/container.png");
+    private static final Identifier TEXTURE_TRANSPARENT = new MeteorIdentifier("textures/container-transparent.png");
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgScale = settings.createGroup("Scale");
-    private final SettingGroup sgBackground = settings.createGroup("Background");
 
     private final Setting<Boolean> containers = sgGeneral.add(new BoolSetting.Builder()
         .name("containers")
@@ -37,30 +36,17 @@ public class InventoryHud extends HudElement {
         .build()
     );
 
-    // Scale
-
-    public final Setting<Boolean> customScale = sgScale.add(new BoolSetting.Builder()
-        .name("custom-scale")
-        .description("Applies a custom scale to this hud element.")
-        .defaultValue(false)
-        .onChanged(aBoolean -> calculateSize())
-        .build()
-    );
-
-    public final Setting<Double> scale = sgScale.add(new DoubleSetting.Builder()
+    private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
-        .description("Custom scale.")
-        .visible(customScale::get)
+        .description("The scale.")
         .defaultValue(2)
+        .min(1)
+        .sliderRange(1, 5)
         .onChanged(aDouble -> calculateSize())
-        .min(0.5)
-        .sliderRange(0.5, 3)
         .build()
     );
 
-    // Background
-
-    private final Setting<Background> background = sgBackground.add(new EnumSetting.Builder<Background>()
+    private final Setting<Background> background = sgGeneral.add(new EnumSetting.Builder<Background>()
         .name("background")
         .description("Background of inventory viewer.")
         .defaultValue(Background.Texture)
@@ -68,11 +54,11 @@ public class InventoryHud extends HudElement {
         .build()
     );
 
-    public final Setting<SettingColor> backgroundColor = sgBackground.add(new ColorSetting.Builder()
+    private final Setting<SettingColor> color = sgGeneral.add(new ColorSetting.Builder()
         .name("background-color")
-        .description("Color used for the background.")
-        .visible(() -> background.get() != Background.None)
+        .description("Color of the background.")
         .defaultValue(new SettingColor(255, 255, 255))
+        .visible(() -> background.get() != Background.None)
         .build()
     );
 
@@ -91,7 +77,7 @@ public class InventoryHud extends HudElement {
         ItemStack container = getContainer();
         boolean hasContainer = containers.get() && container != null;
         if (hasContainer) Utils.getItemsInContainerItem(container, containerItems);
-        Color drawColor = hasContainer ? Utils.getShulkerColor(container) : backgroundColor.get();
+        Color drawColor = hasContainer ? Utils.getShulkerColor(container) : color.get();
 
         if (background.get() != Background.None) {
             drawBackground(renderer, (int) x, (int) y, drawColor);
@@ -106,17 +92,17 @@ public class InventoryHud extends HudElement {
                     ItemStack stack = hasContainer ? containerItems[index] : mc.player.getInventory().getStack(index + 9);
                     if (stack == null) continue;
 
-                    int itemX = background.get() == Background.Texture ? (int) (x + (8 + i * 18) * getScale()) : (int) (x + (1 + i * 18) * getScale());
-                    int itemY = background.get() == Background.Texture ? (int) (y + (7 + row * 18) * getScale()) : (int) (y + (1 + row * 18) * getScale());
+                    int itemX = background.get() == Background.Texture ? (int) (x + (8 + i * 18) * scale.get()) : (int) (x + (1 + i * 18) * scale.get());
+                    int itemY = background.get() == Background.Texture ? (int) (y + (7 + row * 18) * scale.get()) : (int) (y + (1 + row * 18) * scale.get());
 
-                    renderer.item(stack, itemX, itemY, (float) getScale(), true);
+                    renderer.item(stack, itemX, itemY, scale.get().floatValue(), true);
                 }
             }
         });
     }
 
     private void calculateSize() {
-        setSize(background.get().width * getScale(), background.get().height * getScale());
+        setSize(background.get().width * scale.get(), background.get().height * scale.get());
     }
 
     private void drawBackground(HudRenderer renderer, int x, int y, Color color) {
@@ -139,10 +125,6 @@ public class InventoryHud extends HudElement {
         if (Utils.hasItems(stack) || stack.getItem() == Items.ENDER_CHEST) return stack;
 
         return null;
-    }
-
-    private double getScale() {
-        return customScale.get() ? scale.get() : scale.getDefaultValue();
     }
 
     public enum Background {

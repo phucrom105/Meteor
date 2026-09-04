@@ -6,7 +6,6 @@
 package meteordevelopment.meteorclient.mixin;
 
 import it.unimi.dsi.fastutil.io.FastByteArrayOutputStream;
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.screens.EditBookTitleAndAuthorScreen;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
@@ -37,18 +36,12 @@ import java.util.Base64;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 @Mixin(BookScreen.class)
-public abstract class BookScreenMixin extends Screen {
+public class BookScreenMixin extends Screen {
     @Shadow
     private BookScreen.Contents contents;
 
     @Shadow
     private int pageIndex;
-
-    @Shadow
-    protected abstract void goToNextPage();
-
-    @Shadow
-    protected abstract void goToPreviousPage();
 
     public BookScreenMixin(Text title) {
         super(title);
@@ -70,11 +63,11 @@ public abstract class BookScreenMixin extends Screen {
                     try {
                         NbtIo.write(tag, out);
                     } catch (IOException e) {
-                        MeteorClient.LOG.error("Error writing the book to the output stream", e);
+                        e.printStackTrace();
                     }
 
                     String encoded = Base64.getEncoder().encodeToString(bytes.array);
-
+                    
                     @SuppressWarnings("resource")
                     long available = MemoryStack.stackGet().getPointer();
                     long size = MemoryUtil.memLengthUTF8(encoded, true);
@@ -111,14 +104,5 @@ public abstract class BookScreenMixin extends Screen {
                 .size(120, 20)
                 .build()
         );
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        if (verticalAmount == 0) return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
-
-        if (verticalAmount < 0) this.goToNextPage();    // scroll down
-        else this.goToPreviousPage();                   // scroll up
-        return true;
     }
 }

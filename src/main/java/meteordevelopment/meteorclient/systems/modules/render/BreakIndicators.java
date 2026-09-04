@@ -13,13 +13,12 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.systems.modules.world.HighwayBuilder;
 import meteordevelopment.meteorclient.systems.modules.world.PacketMine;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
-import net.minecraft.entity.player.BlockBreakingInfo;
+import net.minecraft.client.render.BlockBreakingInfo;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.shape.VoxelShape;
@@ -44,35 +43,18 @@ public class BreakIndicators extends Module {
         .build()
     );
 
-    private final Setting<SettingColor> startSideColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("start-side-color")
-        .description("The side color for the non-broken block.")
+
+    private final Setting<SettingColor> startColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("start-color")
+        .description("The color for the non-broken block.")
         .defaultValue(new SettingColor(25, 252, 25, 150))
-        .visible(() -> shapeMode.get().sides())
         .build()
     );
 
-    private final Setting<SettingColor> startLineColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("start-line-color")
-        .description("The line color for the non-broken block.")
-        .defaultValue(new SettingColor(25, 252, 25, 150))
-        .visible(() -> shapeMode.get().lines())
-        .build()
-    );
-
-    private final Setting<SettingColor> endSideColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("end-side-color")
-        .description("The side color for the fully-broken block.")
+    private final Setting<SettingColor> endColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("end-color")
+        .description("The color for the fully-broken block.")
         .defaultValue(new SettingColor(255, 25, 25, 150))
-        .visible(() -> shapeMode.get().sides())
-        .build()
-    );
-
-    private final Setting<SettingColor> endLineColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("end-line-color")
-        .description("The line color for the fully-broken block.")
-        .defaultValue(new SettingColor(255, 25, 25, 150))
-        .visible(() -> shapeMode.get().lines())
         .build()
     );
 
@@ -90,32 +72,13 @@ public class BreakIndicators extends Module {
         if (packetMine.get() && !Modules.get().get(PacketMine.class).blocks.isEmpty()) {
             renderPacket(event, Modules.get().get(PacketMine.class).blocks);
         }
-
-        HighwayBuilder b = Modules.get().get(HighwayBuilder.class);
-        if (!b.isActive()) return;
-
-        if (b.normalMining != null) {
-            VoxelShape voxelShape = b.normalMining.blockState.getOutlineShape(mc.world, b.normalMining.blockPos);
-            if (voxelShape.isEmpty()) return;
-
-            double normalised = Math.min(1, b.normalMining.progress());
-            renderBlock(event, voxelShape.getBoundingBox(), b.normalMining.blockPos, 1 - normalised, normalised);
-        }
-
-        if (b.packetMining != null) {
-            VoxelShape voxelShape = b.packetMining.blockState.getOutlineShape(mc.world, b.packetMining.blockPos);
-            if (voxelShape.isEmpty()) return;
-
-            double normalised = Math.min(1, b.packetMining.progress());
-            renderBlock(event, voxelShape.getBoundingBox(), b.packetMining.blockPos, 1 - normalised, normalised);
-        }
     }
 
     private void renderNormal(Render3DEvent event) {
-        Map<Integer, BlockBreakingInfo> blocks = ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos();
+        Map<Integer, BlockBreakingInfo> blocks = ((WorldRendererAccessor) mc.worldRenderer).getBlockBreakingInfos();
 
-        float ownBreakingStage = ((ClientPlayerInteractionManagerAccessor) mc.interactionManager).meteor$getBreakingProgress();
-        BlockPos ownBreakingPos = ((ClientPlayerInteractionManagerAccessor) mc.interactionManager).meteor$getCurrentBreakingBlockPos();
+        float ownBreakingStage = ((ClientPlayerInteractionManagerAccessor) mc.interactionManager).getBreakingProgress();
+        BlockPos ownBreakingPos = ((ClientPlayerInteractionManagerAccessor) mc.interactionManager).getCurrentBreakingBlockPos();
 
         if (ownBreakingPos != null && ownBreakingStage > 0) {
             BlockState state = mc.world.getBlockState(ownBreakingPos);
@@ -149,13 +112,13 @@ public class BreakIndicators extends Module {
 
     private void renderPacket(Render3DEvent event, List<PacketMine.MyBlock> blocks) {
         for (PacketMine.MyBlock block : blocks) {
-            if (block.mining && block.progress() != Double.POSITIVE_INFINITY) {
+            if (block.mining && block.progress != Double.POSITIVE_INFINITY) {
                 VoxelShape shape = block.blockState.getOutlineShape(mc.world, block.blockPos);
                 if (shape == null || shape.isEmpty()) return;
 
                 Box orig = shape.getBoundingBox();
 
-                double progressNormalised = Math.min(1, block.progress());
+                double progressNormalised = block.progress > 1 ? 1 : block.progress;
                 double shrinkFactor = 1d - progressNormalised;
                 BlockPos pos = block.blockPos;
 
@@ -182,8 +145,8 @@ public class BreakIndicators extends Module {
         double y2 = pos.getY() + box.maxY + yShrink;
         double z2 = pos.getZ() + box.maxZ + zShrink;
 
-        Color c1Sides = startSideColor.get().copy().a(startSideColor.get().a / 2);
-        Color c2Sides = endSideColor.get().copy().a(endSideColor.get().a / 2);
+        Color c1Sides = startColor.get().copy().a(startColor.get().a / 2);
+        Color c2Sides = endColor.get().copy().a(endColor.get().a / 2);
 
         cSides.set(
             (int) Math.round(c1Sides.r + (c2Sides.r - c1Sides.r) * progress),
@@ -192,8 +155,8 @@ public class BreakIndicators extends Module {
             (int) Math.round(c1Sides.a + (c2Sides.a - c1Sides.a) * progress)
         );
 
-        Color c1Lines = startLineColor.get();
-        Color c2Lines = endLineColor.get();
+        Color c1Lines = startColor.get();
+        Color c2Lines = endColor.get();
 
         cLines.set(
             (int) Math.round(c1Lines.r + (c2Lines.r - c1Lines.r) * progress),

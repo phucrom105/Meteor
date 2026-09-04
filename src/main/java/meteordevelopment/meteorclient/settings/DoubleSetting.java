@@ -51,7 +51,7 @@ public class DoubleSetting extends Setting<Double> {
 
     @Override
     public Double load(NbtCompound tag) {
-        set(tag.getDouble("value", 0.0));
+        set(tag.getDouble("value"));
 
         return get();
     }

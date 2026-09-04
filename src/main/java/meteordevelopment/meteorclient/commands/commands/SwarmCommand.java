@@ -28,6 +28,7 @@ import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.BlockStateArgument;
 import net.minecraft.command.argument.BlockStateArgumentType;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.text.ClickEvent;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -36,6 +37,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Random;
+
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class SwarmCommand extends Command {
 
@@ -72,7 +76,7 @@ public class SwarmCommand extends Command {
                                     info("Are you sure you want to connect to '%s:%s'?", ip, port);
                                     info(Text.literal("Click here to confirm").setStyle(Style.EMPTY
                                         .withFormatting(Formatting.UNDERLINE, Formatting.GREEN)
-                                        .withClickEvent(new MeteorClickEvent(".swarm join confirm"))
+                                        .withClickEvent(new MeteorClickEvent(ClickEvent.Action.RUN_COMMAND, ".swarm join confirm"))
                                     ));
 
                                     return SINGLE_SUCCESS;
@@ -86,7 +90,7 @@ public class SwarmCommand extends Command {
                     }
 
                     Swarm swarm = Modules.get().get(Swarm.class);
-                    swarm.enable();
+                    if (!swarm.isActive()) swarm.toggle();
 
                     swarm.close();
                     swarm.mode.set(Swarm.Mode.Worker);
@@ -306,7 +310,7 @@ public class SwarmCommand extends Command {
                                             swarm.host.sendMessage(context.getInput());
                                         } else if (swarm.isWorker()) {
                                             Module m = ModuleArgumentType.get(context);
-                                            m.enable();
+                                            if (!m.isActive()) m.toggle();
                                         }
                                     } else {
                                         throw SWARM_NOT_ACTIVE.create();
@@ -320,7 +324,7 @@ public class SwarmCommand extends Command {
                                             swarm.host.sendMessage(context.getInput());
                                         } else if (swarm.isWorker()) {
                                             Module m = ModuleArgumentType.get(context);
-                                            m.disable();
+                                            if (m.isActive()) m.toggle();
                                         }
                                     } else {
                                         throw SWARM_NOT_ACTIVE.create();
@@ -388,9 +392,9 @@ public class SwarmCommand extends Command {
 
     private void runInfinityMiner() {
         InfinityMiner infinityMiner = Modules.get().get(InfinityMiner.class);
-        infinityMiner.disable();
+        if (infinityMiner.isActive()) infinityMiner.toggle();
 //        infinityMiner.smartModuleToggle.set(true);
-        infinityMiner.enable();
+        if (!infinityMiner.isActive()) infinityMiner.toggle();
     }
 
     private void scatter(int radius) {

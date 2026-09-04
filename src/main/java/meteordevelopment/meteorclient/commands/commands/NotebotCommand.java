@@ -18,7 +18,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.Notebot;
 import meteordevelopment.meteorclient.utils.notebot.song.Note;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.enums.NoteBlockInstrument;
+import net.minecraft.block.enums.Instrument;
 import net.minecraft.command.CommandSource;
 import net.minecraft.network.packet.s2c.play.PlaySoundS2CPacket;
 import net.minecraft.sound.SoundEvent;
@@ -33,9 +33,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+
 public class NotebotCommand extends Command {
-    private static final SimpleCommandExceptionType INVALID_SONG = new SimpleCommandExceptionType(Text.literal("Invalid song."));
-    private static final DynamicCommandExceptionType INVALID_PATH = new DynamicCommandExceptionType(object -> Text.literal("'%s' is not a valid path.".formatted(object)));
+    private final static SimpleCommandExceptionType INVALID_SONG = new SimpleCommandExceptionType(Text.literal("Invalid song."));
+    private final static DynamicCommandExceptionType INVALID_PATH = new DynamicCommandExceptionType(object -> Text.literal("'%s' is not a valid path.".formatted(object)));
 
     int ticks = -1;
     private final Map<Integer, List<Note>> song = new HashMap<>(); // tick -> notes
@@ -144,7 +146,7 @@ public class NotebotCommand extends Command {
 
     @EventHandler
     private void onReadPacket(PacketEvent.Receive event) {
-        if (event.packet instanceof PlaySoundS2CPacket sound && sound.getSound().value().id().getPath().contains("note_block")) {
+        if (event.packet instanceof PlaySoundS2CPacket sound && sound.getSound().value().getId().getPath().contains("note_block")) {
             if (ticks == -1) ticks = 0;
             List<Note> notes = song.computeIfAbsent(ticks, tick -> new ArrayList<>());
             var note = getNote(sound);
@@ -155,7 +157,7 @@ public class NotebotCommand extends Command {
     }
 
     private void saveRecording(Path path) {
-        if (song.isEmpty()) {
+        if (song.size() < 1) {
             MeteorClient.EVENT_BUS.unsubscribe(this);
             return;
         }
@@ -168,7 +170,7 @@ public class NotebotCommand extends Command {
                 List<Note> notes = entry.getValue();
 
                 for (var note : notes) {
-                    NoteBlockInstrument instrument = note.getInstrument();
+                    Instrument instrument = note.getInstrument();
                     int noteLevel = note.getNoteLevel();
 
                     file.write(String.format("%d:%d:%d\n", tick, noteLevel, instrument.ordinal()));
@@ -202,7 +204,7 @@ public class NotebotCommand extends Command {
             return null;
         }
 
-        NoteBlockInstrument instrument = getInstrumentFromSound(soundPacket.getSound().value());
+        Instrument instrument = getInstrumentFromSound(soundPacket.getSound().value());
         if (instrument == null) {
             error("Can't find the instrument from sound! Sound: " + soundPacket.getSound().value());
             return null;
@@ -211,40 +213,40 @@ public class NotebotCommand extends Command {
         return new Note(instrument, noteLevel);
     }
 
-    private NoteBlockInstrument getInstrumentFromSound(SoundEvent sound) {
-        String path = sound.id().getPath();
+    private Instrument getInstrumentFromSound(SoundEvent sound) {
+        String path = sound.getId().getPath();
         if (path.contains("harp"))
-            return NoteBlockInstrument.HARP;
+            return Instrument.HARP;
         else if (path.contains("basedrum"))
-            return NoteBlockInstrument.BASEDRUM;
+            return Instrument.BASEDRUM;
         else if (path.contains("snare"))
-            return NoteBlockInstrument.SNARE;
+            return Instrument.SNARE;
         else if (path.contains("hat"))
-            return NoteBlockInstrument.HAT;
+            return Instrument.HAT;
         else if (path.contains("bass"))
-            return NoteBlockInstrument.BASS;
+            return Instrument.BASS;
         else if (path.contains("flute"))
-            return NoteBlockInstrument.FLUTE;
+            return Instrument.FLUTE;
         else if (path.contains("bell"))
-            return NoteBlockInstrument.BELL;
+            return Instrument.BELL;
         else if (path.contains("guitar"))
-            return NoteBlockInstrument.GUITAR;
+            return Instrument.GUITAR;
         else if (path.contains("chime"))
-            return NoteBlockInstrument.CHIME;
+            return Instrument.CHIME;
         else if (path.contains("xylophone"))
-            return NoteBlockInstrument.XYLOPHONE;
+            return Instrument.XYLOPHONE;
         else if (path.contains("iron_xylophone"))
-            return NoteBlockInstrument.IRON_XYLOPHONE;
+            return Instrument.IRON_XYLOPHONE;
         else if (path.contains("cow_bell"))
-            return NoteBlockInstrument.COW_BELL;
+            return Instrument.COW_BELL;
         else if (path.contains("didgeridoo"))
-            return NoteBlockInstrument.DIDGERIDOO;
+            return Instrument.DIDGERIDOO;
         else if (path.contains("bit"))
-            return NoteBlockInstrument.BIT;
+            return Instrument.BIT;
         else if (path.contains("banjo"))
-            return NoteBlockInstrument.BANJO;
+            return Instrument.BANJO;
         else if (path.contains("pling"))
-            return NoteBlockInstrument.PLING;
+            return Instrument.PLING;
         return null;
     }
 }

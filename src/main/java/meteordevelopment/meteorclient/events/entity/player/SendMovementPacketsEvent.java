@@ -9,7 +9,7 @@ public class SendMovementPacketsEvent {
     public static class Pre {
         private static final Pre INSTANCE = new Pre();
 
-        public static Pre get() {
+        public static SendMovementPacketsEvent.Pre get() {
             return INSTANCE;
         }
     }
@@ -17,7 +17,7 @@ public class SendMovementPacketsEvent {
     public static class Post {
         private static final Post INSTANCE = new Post();
 
-        public static Post get() {
+        public static SendMovementPacketsEvent.Post get() {
             return INSTANCE;
         }
     }

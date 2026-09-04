@@ -10,7 +10,6 @@ import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.gui.tabs.Tab;
 import meteordevelopment.meteorclient.gui.tabs.TabScreen;
 import meteordevelopment.meteorclient.gui.tabs.WindowTabScreen;
-import meteordevelopment.meteorclient.gui.widgets.containers.WContainer;
 import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WCheckbox;
@@ -19,6 +18,7 @@ import meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.nbt.NbtCompound;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -38,7 +38,6 @@ public class HudTab extends Tab {
     }
 
     public static class HudScreen extends WindowTabScreen {
-        private WContainer settingsContainer;
         private final Hud hud;
 
         public HudScreen(GuiTheme theme, Tab tab) {
@@ -50,8 +49,7 @@ public class HudTab extends Tab {
 
         @Override
         public void initWidgets() {
-            settingsContainer = add(theme.verticalList()).expandX().widget();
-            settingsContainer.add(theme.settings(hud.settings)).expandX().widget();
+            add(theme.settings(hud.settings)).expandX();
 
             add(theme.horizontalSeparator()).expandX();
 
@@ -59,8 +57,8 @@ public class HudTab extends Tab {
             openEditor.action = () -> mc.setScreen(new HudEditorScreen(theme));
 
             WHorizontalList buttons = add(theme.horizontalList()).expandX().widget();
-            buttons.add(theme.confirmedButton("Clear", "Confirm")).expandX().widget().action = hud::clear;
-            buttons.add(theme.confirmedButton("Reset to default elements", "Confirm")).expandX().widget().action = hud::resetToDefaultElements;
+            buttons.add(theme.button("Clear")).expandX().widget().action = hud::clear;
+            buttons.add(theme.button("Reset to default elements")).expandX().widget().action = hud::resetToDefaultElements;
 
             add(theme.horizontalSeparator()).expandX();
 
@@ -72,7 +70,6 @@ public class HudTab extends Tab {
 
             WButton resetSettings = bottom.add(theme.button(GuiRenderer.RESET)).widget();
             resetSettings.action = hud.settings::reset;
-            resetSettings.tooltip = "Reset";
         }
 
         @Override
@@ -81,20 +78,20 @@ public class HudTab extends Tab {
         }
 
         @Override
-        public void tick() {
-            super.tick();
-
-            hud.settings.tick(settingsContainer, theme);
-        }
-
-        @Override
         public boolean toClipboard() {
-            return NbtUtils.toClipboard(hud);
+            return NbtUtils.toClipboard("hud-settings", hud.settings.toTag());
         }
 
         @Override
         public boolean fromClipboard() {
-            return NbtUtils.fromClipboard(hud);
+            NbtCompound clipboard = NbtUtils.fromClipboard(hud.settings.toTag());
+
+            if (clipboard != null) {
+                hud.settings.fromTag(clipboard);
+                return true;
+            }
+
+            return false;
         }
     }
 }

@@ -34,12 +34,15 @@ public class Friends extends System<Friends> implements Iterable<Friend> {
 
     public boolean add(Friend friend) {
         if (friend.name.isEmpty() || friend.name.contains(" ")) return false;
-        if (get(friend.name) != null) return false;
 
-        friends.add(friend);
-        save();
+        if (!friends.contains(friend)) {
+            friends.add(friend);
+            save();
 
-        return true;
+            return true;
+        }
+
+        return false;
     }
 
     public boolean remove(Friend friend) {
@@ -53,7 +56,7 @@ public class Friends extends System<Friends> implements Iterable<Friend> {
 
     public Friend get(String name) {
         for (Friend friend : friends) {
-            if (friend.name.equalsIgnoreCase(name)) {
+            if (friend.name.equals(name)) {
                 return friend;
             }
         }
@@ -66,7 +69,7 @@ public class Friends extends System<Friends> implements Iterable<Friend> {
     }
 
     public Friend get(PlayerListEntry player) {
-        return get(player.getProfile().name());
+        return get(player.getProfile().getName());
     }
 
     public boolean isFriend(PlayerEntity player) {
@@ -107,14 +110,14 @@ public class Friends extends System<Friends> implements Iterable<Friend> {
     public Friends fromTag(NbtCompound tag) {
         friends.clear();
 
-        for (NbtElement itemTag : tag.getListOrEmpty("friends")) {
+        for (NbtElement itemTag : tag.getList("friends", 10)) {
             NbtCompound friendTag = (NbtCompound) itemTag;
             if (!friendTag.contains("name")) continue;
 
-            String name = friendTag.getString("name", "");
+            String name = friendTag.getString("name");
             if (get(name) != null) continue;
 
-            String uuid = friendTag.getString("id", "");
+            String uuid = friendTag.getString("id");
             Friend friend = !uuid.isBlank()
                 ? new Friend(name, UndashedUuid.fromStringLenient(uuid))
                 : new Friend(name);

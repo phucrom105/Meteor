@@ -38,9 +38,6 @@ public class Rotations {
     private static boolean sentLastRotation;
     public static boolean rotating = false;
 
-    private Rotations() {
-    }
-
     @PreInit
     public static void init() {
         MeteorClient.EVENT_BUS.subscribe(Rotations.class);
@@ -85,7 +82,7 @@ public class Rotations {
 
     @EventHandler
     private static void onSendMovementPacketsPre(SendMovementPacketsEvent.Pre event) {
-        if (mc.getCameraEntity() != mc.player) return;
+        if (mc.cameraEntity != mc.player) return;
         sentLastRotation = false;
 
         if (!rotations.isEmpty()) {
@@ -127,7 +124,7 @@ public class Rotations {
     @EventHandler
     private static void onSendMovementPacketsPost(SendMovementPacketsEvent.Post event) {
         if (!rotations.isEmpty()) {
-            if (mc.getCameraEntity() == mc.player) {
+            if (mc.cameraEntity == mc.player) {
                 rotations.get(i - 1).runCallback();
 
                 if (rotations.size() == 1) lastRotation = rotations.get(i - 1);
@@ -236,7 +233,7 @@ public class Rotations {
         }
 
         public void sendPacket() {
-            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround((float) yaw, (float) pitch, mc.player.isOnGround(), mc.player.horizontalCollision));
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround((float) yaw, (float) pitch, mc.player.isOnGround()));
             runCallback();
         }
 

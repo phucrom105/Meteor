@@ -13,6 +13,9 @@ import net.minecraft.command.CommandSource;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+import static meteordevelopment.meteorclient.MeteorClient.mc;
+
 public class RotationCommand extends Command {
     public RotationCommand() {
         super("rotation", "Modifies your rotation.");
@@ -25,7 +28,7 @@ public class RotationCommand extends Command {
                 .then(argument("direction", DirectionArgumentType.create())
                     .executes(context -> {
                         mc.player.setPitch(context.getArgument("direction", Direction.class).getVector().getY() * -90);
-                        mc.player.setYaw(context.getArgument("direction", Direction.class).getPositiveHorizontalDegrees());
+                        mc.player.setYaw(context.getArgument("direction", Direction.class).asRotation());
 
                         return SINGLE_SUCCESS;
                     }))

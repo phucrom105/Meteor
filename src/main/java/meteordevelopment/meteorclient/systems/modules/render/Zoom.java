@@ -6,7 +6,6 @@
 package meteordevelopment.meteorclient.systems.modules.render;
 
 import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseScrollEvent;
 import meteordevelopment.meteorclient.events.render.GetFovEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -19,7 +18,6 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.util.math.MathHelper;
-import org.lwjgl.glfw.GLFW;
 
 public class Zoom extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -54,18 +52,10 @@ public class Zoom extends Module {
         .build()
     );
 
-    private final Setting<Boolean> hideHud = sgGeneral.add(new BoolSetting.Builder()
-        .name("hide-HUD")
-        .description("Whether or not to hide the Minecraft HUD.")
-        .defaultValue(false)
-        .build()
-    );
-
     private final Setting<Boolean> renderHands = sgGeneral.add(new BoolSetting.Builder()
         .name("show-hands")
         .description("Whether or not to render your hands.")
         .defaultValue(false)
-        .visible(() -> !hideHud.get())
         .build()
     );
 
@@ -75,8 +65,6 @@ public class Zoom extends Module {
     private double value;
     private double lastFov;
     private double time;
-
-    private boolean hudManualToggled;
 
     public Zoom() {
         super(Categories.Render, "zoom", "Zooms your view.");
@@ -95,24 +83,6 @@ public class Zoom extends Module {
             MeteorClient.EVENT_BUS.subscribe(this);
             enabled = true;
         }
-
-        if (hideHud.get() && !mc.options.hudHidden) {
-            hudManualToggled = false;
-            mc.options.hudHidden = true;
-        }
-    }
-
-    @Override
-    public void onDeactivate() {
-        if (hideHud.get() && !hudManualToggled) {
-            mc.options.hudHidden = false;
-        }
-    }
-
-    @EventHandler
-    public void onKeyPressed(KeyEvent event) {
-        if (event.key() != GLFW.GLFW_KEY_F1) return;
-        hudManualToggled = true;
     }
 
     public void onStop() {
@@ -127,7 +97,7 @@ public class Zoom extends Module {
         mc.options.smoothCameraEnabled = cinematic.get();
 
         if (!cinematic.get()) {
-            mc.options.getMouseSensitivity().setValue(preMouseSensitivity / Math.max(getScaling() * 0.5, 1));
+            mc.options.getMouseSensitivity().setValue(preMouseSensitivity / Math.max(value() * 0.5, 1));
         }
 
         if (time == 0) {
@@ -163,13 +133,13 @@ public class Zoom extends Module {
 
     @EventHandler
     private void onGetFov(GetFovEvent event) {
-        event.fov /= (float) getScaling();
+        event.fov /= value();
 
         if (lastFov != event.fov) mc.worldRenderer.scheduleTerrainUpdate();
         lastFov = event.fov;
     }
 
-    public double getScaling() {
+    private double value() {
         double delta = time < 0.5 ? 4 * time * time * time : 1 - Math.pow(-2 * time + 2, 3) / 2; // Ease in out cubic
         return MathHelper.lerp(delta, 1, value);
     }

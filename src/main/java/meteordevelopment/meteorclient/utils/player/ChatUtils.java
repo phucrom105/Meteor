@@ -30,9 +30,6 @@ public class ChatUtils {
 
     private static Text PREFIX;
 
-    private ChatUtils() {
-    }
-
     @PostInit
     public static void init() {
         PREFIX = Text.empty()
@@ -46,10 +43,7 @@ public class ChatUtils {
         return PREFIX;
     }
 
-    /**
-     * Registers a custom prefix to be used when calling from a class in the specified package. When null is returned from the supplier the default Meteor prefix is used.
-     */
-    @SuppressWarnings("unused")
+    /** Registers a custom prefix to be used when calling from a class in the specified package. When null is returned from the supplier the default Meteor prefix is used. */
     public static void registerCustomPrefix(String packageName, Supplier<Text> supplier) {
         for (Pair<String, Supplier<Text>> pair : customPrefixes) {
             if (pair.getLeft().equals(packageName)) {
@@ -61,10 +55,7 @@ public class ChatUtils {
         customPrefixes.add(new Pair<>(packageName, supplier));
     }
 
-    /**
-     * The package name must match exactly to the one provided through {@link #registerCustomPrefix(String, Supplier)}.
-     */
-    @SuppressWarnings("unused")
+    /** The package name must match exactly to the one provided through {@link #registerCustomPrefix(String, Supplier)}. */
     public static void unregisterCustomPrefix(String packageName) {
         customPrefixes.removeIf(pair -> pair.getLeft().equals(packageName));
     }
@@ -75,18 +66,9 @@ public class ChatUtils {
 
     // Player
 
-    /**
-     * Sends the message as if the user typed it into chat and adds it to the chat history.
-     */
+    /** Sends the message as if the user typed it into chat. */
     public static void sendPlayerMsg(String message) {
-        sendPlayerMsg(message, true);
-    }
-
-    /**
-     * Sends the message as if the user typed it into chat.
-     */
-    public static void sendPlayerMsg(String message, boolean addToHistory) {
-        if (addToHistory) mc.inGameHud.getChatHud().addToMessageHistory(message);
+        mc.inGameHud.getChatHud().addToMessageHistory(message);
 
         if (message.startsWith("/")) mc.player.networkHandler.sendChatCommand(message.substring(1));
         else mc.player.networkHandler.sendChatMessage(message);
@@ -160,8 +142,7 @@ public class ChatUtils {
 
         if (!Config.get().deleteChatFeedback.get()) id = 0;
 
-        final int finalId = id; // Intellij copes about using non-final args in lambdas
-        mc.execute(() -> ((IChatHud) mc.inGameHud.getChatHud()).meteor$add(message, finalId));
+        ((IChatHud) mc.inGameHud.getChatHud()).meteor$add(message, id);
     }
 
     private static MutableText getCustomPrefix(String prefixTitle, Formatting prefixColor) {
@@ -191,7 +172,8 @@ public class ChatUtils {
         if (forcedPrefixClassName != null) {
             className = forcedPrefixClassName;
             forcedPrefixClassName = null;
-        } else {
+        }
+        else {
             for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
                 if (foundChatUtils) {
                     if (!element.getClassName().equals(ChatUtils.class.getName())) {
@@ -246,10 +228,6 @@ public class ChatUtils {
                             style = style.withFormatting(Formatting.UNDERLINE);
                             result.setLength(0);
                         }
-                        case "(bold)" -> {
-                            style = style.withFormatting(Formatting.BOLD);
-                            result.setLength(0);
-                        }
                     }
                     formatting = false;
                 }
@@ -265,18 +243,19 @@ public class ChatUtils {
         String coordsString = String.format("(highlight)(underline)%.0f, %.0f, %.0f(default)", pos.x, pos.y, pos.z);
         MutableText coordsText = formatMsg(coordsString, Formatting.GRAY);
 
-        if (BaritoneUtils.IS_AVAILABLE) {
-            Style style = coordsText.getStyle().withFormatting(Formatting.BOLD)
-                .withHoverEvent(new HoverEvent.ShowText(
-                    Text.literal("Set as Baritone goal")
-                ))
-                .withClickEvent(new MeteorClickEvent(
-                    String.format("%sgoto %d %d %d", BaritoneUtils.getPrefix(), (int) pos.x, (int) pos.y, (int) pos.z)
-                ));
+        Style style = coordsText.getStyle().withFormatting(Formatting.BOLD).withHoverEvent(new HoverEvent(
+            HoverEvent.Action.SHOW_TEXT,
+            Text.literal("Set as Baritone goal")
+        ));
 
-            coordsText.setStyle(style);
+        if (BaritoneUtils.IS_AVAILABLE) {
+            style = style.withClickEvent(new MeteorClickEvent(
+                ClickEvent.Action.RUN_COMMAND,
+                String.format("%sgoto %d %d %d", BaritoneUtils.getPrefix(), (int) pos.x, (int) pos.y, (int) pos.z)
+            ));
         }
 
+        coordsText.setStyle(style);
         return coordsText;
     }
 }

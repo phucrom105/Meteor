@@ -48,11 +48,7 @@ public class WIntEdit extends WHorizontalList {
 
             if (textBox.get().isEmpty()) value = 0;
             else if (textBox.get().equals("-")) value = -0;
-            else {
-                try {
-                    value = Integer.parseInt(textBox.get());
-                } catch (NumberFormatException ignored) {}
-            }
+            else value = Integer.parseInt(textBox.get());
 
             if (slider != null) slider.set(value);
 
@@ -103,7 +99,8 @@ public class WIntEdit extends WHorizontalList {
         if (this.value == v) return;
 
         if (v < min) this.value = min;
-        else this.value = Math.min(v, max);
+        else if (v > max) this.value = max;
+        else this.value = v;
 
         if (this.value == v) {
             textBox.set(Integer.toString(this.value));

@@ -6,7 +6,7 @@
 package meteordevelopment.meteorclient.systems.modules.player;
 
 import meteordevelopment.meteorclient.events.entity.player.BlockBreakingCooldownEvent;
-import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseButtonEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -52,7 +52,7 @@ public class BreakDelay extends Module {
     }
 
     @EventHandler
-    private void onClick(MouseClickEvent event) {
+    private void onClick(MouseButtonEvent event) {
         if (event.action == KeyAction.Press && noInstaBreak.get()) {
             breakBlockCooldown = true;
         }

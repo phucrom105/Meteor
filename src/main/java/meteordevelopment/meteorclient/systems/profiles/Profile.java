@@ -5,7 +5,6 @@
 
 package meteordevelopment.meteorclient.systems.profiles;
 
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.macros.Macros;
@@ -31,6 +30,7 @@ public class Profile implements ISerializable<Profile> {
     public Setting<String> name = sgGeneral.add(new StringSetting.Builder()
         .name("name")
         .description("The name of the profile.")
+        .defaultValue("")
         .filter(Utils::nameFilter)
         .build()
     );
@@ -76,8 +76,7 @@ public class Profile implements ISerializable<Profile> {
     }
 
     public void load() {
-        File folder = getSafeFile();
-        if (folder == null) return;
+        File folder = getFile();
 
         if (hud.get()) Hud.get().load(folder);
         if (macros.get()) Macros.get().load(folder);
@@ -86,8 +85,7 @@ public class Profile implements ISerializable<Profile> {
     }
 
     public void save() {
-        File folder = getSafeFile();
-        if (folder == null) return;
+        File folder = getFile();
 
         if (hud.get()) Hud.get().save(folder);
         if (macros.get()) Macros.get().save(folder);
@@ -97,29 +95,14 @@ public class Profile implements ISerializable<Profile> {
 
     public void delete() {
         try {
-            File folder = getSafeFile();
-            if (folder != null) FileUtils.deleteDirectory(folder);
+            FileUtils.deleteDirectory(getFile());
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error deleting profile {}", name.get(), e);
+            e.printStackTrace();
         }
     }
 
-    public File getFile() {
+    private File getFile() {
         return new File(Profiles.FOLDER, name.get());
-    }
-
-    public File getSafeFile() {
-        try {
-            File folder = getFile().getCanonicalFile();
-            File profilesFolder = Profiles.FOLDER.getCanonicalFile();
-
-            if (name.get().isEmpty() || !profilesFolder.equals(folder.getParentFile())) return null;
-
-            return folder;
-        } catch (IOException e) {
-            MeteorClient.LOG.error("Error resolving profile {}", name.get(), e);
-            return null;
-        }
     }
 
     @Override
@@ -134,7 +117,7 @@ public class Profile implements ISerializable<Profile> {
     @Override
     public Profile fromTag(NbtCompound tag) {
         if (tag.contains("settings")) {
-            settings.fromTag(tag.getCompoundOrEmpty("settings"));
+            settings.fromTag(tag.getCompound("settings"));
         }
 
         return this;

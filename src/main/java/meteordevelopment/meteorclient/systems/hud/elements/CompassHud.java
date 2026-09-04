@@ -19,15 +19,25 @@ public class CompassHud extends HudElement {
     public static final HudElementInfo<CompassHud> INFO = new HudElementInfo<>(Hud.GROUP, "compass", "Displays a compass.", CompassHud::new);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgScale = settings.createGroup("Scale");
+    private final SettingGroup sgTextScale = settings.createGroup("Text Scale");
     private final SettingGroup sgBackground = settings.createGroup("Background");
 
     // General
 
-    private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
+    private final Setting<CompassHud.Mode> mode = sgGeneral.add(new EnumSetting.Builder<CompassHud.Mode>()
         .name("type")
         .description("Which type of direction information to show.")
         .defaultValue(Mode.Axis)
+        .build()
+    );
+
+    private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
+        .name("scale")
+        .description("The scale.")
+        .defaultValue(1)
+        .min(1)
+        .sliderRange(1, 5)
+        .onChanged(aDouble -> calculateSize())
         .build()
     );
 
@@ -39,7 +49,7 @@ public class CompassHud extends HudElement {
     );
 
     private final Setting<SettingColor> colorOther = sgGeneral.add(new ColorSetting.Builder()
-        .name("color-other")
+        .name("color-north")
         .description("Color of other directions.")
         .defaultValue(new SettingColor())
         .build()
@@ -52,34 +62,30 @@ public class CompassHud extends HudElement {
         .build()
     );
 
+    private final Setting<Integer> border = sgGeneral.add(new IntSetting.Builder()
+        .name("border")
+        .description("How much space to add around the element.")
+        .defaultValue(0)
+        .onChanged(integer -> calculateSize())
+        .build()
+    );
+
     // Scale
 
-    private final Setting<Boolean> customScale = sgScale.add(new BoolSetting.Builder()
-        .name("custom-scale")
-        .description("Apply custom scales to this hud element.")
+    private final Setting<Boolean> customTextScale = sgTextScale.add(new BoolSetting.Builder()
+        .name("custom-text-scale")
+        .description("Applies custom text scale rather than the global one.")
         .defaultValue(false)
-        .onChanged(aBoolean -> calculateSize())
         .build()
     );
 
-    private final Setting<Double> textScale = sgScale.add(new DoubleSetting.Builder()
+    private final Setting<Double> textScale = sgTextScale.add(new DoubleSetting.Builder()
         .name("text-scale")
-        .description("Scale to use for the letters.")
-        .visible(customScale::get)
+        .description("Custom text scale.")
+        .visible(customTextScale::get)
         .defaultValue(1)
         .min(0.5)
         .sliderRange(0.5, 3)
-        .build()
-    );
-
-    private final Setting<Double> compassScale = sgScale.add(new DoubleSetting.Builder()
-        .name("compass-scale")
-        .description("Scale of the whole HUD element.")
-        .visible(customScale::get)
-        .defaultValue(1)
-        .min(0.5)
-        .sliderRange(0.5, 3)
-        .onChanged(aDouble -> calculateSize())
         .build()
     );
 
@@ -106,8 +112,13 @@ public class CompassHud extends HudElement {
         calculateSize();
     }
 
+    @Override
+    public void setSize(double width, double height) {
+        super.setSize(width + border.get() * 2, height + border.get() * 2);
+    }
+
     private void calculateSize() {
-        setSize(100 * getCompassScale(), 100 * getCompassScale());
+        setSize(100 * scale.get(), 100 * scale.get());
     }
 
     @Override
@@ -140,11 +151,11 @@ public class CompassHud extends HudElement {
     }
 
     private double getX(Direction direction, double yaw) {
-        return Math.sin(getPos(direction, yaw)) * getCompassScale() * 40;
+        return Math.sin(getPos(direction, yaw)) * scale.get() * 40;
     }
 
     private double getY(Direction direction, double yaw, double pitch) {
-        return Math.cos(getPos(direction, yaw)) * Math.sin(pitch) * getCompassScale() * 40;
+        return Math.cos(getPos(direction, yaw)) * Math.sin(pitch) * scale.get() * 40;
     }
 
     private double getPos(Direction direction, double yaw) {
@@ -152,11 +163,7 @@ public class CompassHud extends HudElement {
     }
 
     private double getTextScale() {
-        return customScale.get() ? textScale.get() : Hud.get().getTextScale();
-    }
-
-    private double getCompassScale() {
-        return customScale.get() ? compassScale.get() : Hud.get().getTextScale();
+        return customTextScale.get() ? textScale.get() : -1;
     }
 
     private enum Direction {

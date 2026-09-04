@@ -7,10 +7,13 @@ package meteordevelopment.meteorclient.systems.modules.player;
 
 import meteordevelopment.meteorclient.events.entity.player.FinishUsingItemEvent;
 import meteordevelopment.meteorclient.events.entity.player.StoppedUsingItemEvent;
-import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseButtonEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.friends.Friend;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Categories;
@@ -26,7 +29,6 @@ import net.minecraft.item.Item;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.util.Hand;
-import net.minecraft.world.GameMode;
 
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_MIDDLE;
 
@@ -41,17 +43,9 @@ public class MiddleClickExtra extends Module {
     );
 
     private final Setting<Boolean> message = sgGeneral.add(new BoolSetting.Builder()
-        .name("send-message")
-        .description("Sends a message when you add a player as a friend.")
+        .name("message")
+        .description("Sends a message to the player when you add them as a friend.")
         .defaultValue(false)
-        .visible(() -> mode.get() == Mode.AddFriend)
-        .build()
-    );
-
-    private final Setting<String> friendMessage = sgGeneral.add(new StringSetting.Builder()
-        .name("message-to-send")
-        .description("Message to send when you add a player as a friend (use %player for the player's name)")
-        .defaultValue("/msg %player I just friended you on Meteor.")
         .visible(() -> mode.get() == Mode.AddFriend)
         .build()
     );
@@ -69,13 +63,6 @@ public class MiddleClickExtra extends Module {
         .description("Swap back to your original slot when you finish using an item.")
         .defaultValue(false)
         .visible(() -> mode.get() != Mode.AddFriend && !quickSwap.get())
-        .build()
-    );
-
-    private final Setting<Boolean> disableInCreative = sgGeneral.add(new BoolSetting.Builder()
-        .name("disable-in-creative")
-        .description("Middle click action is disabled in Creative mode.")
-        .defaultValue(true)
         .build()
     );
 
@@ -102,10 +89,8 @@ public class MiddleClickExtra extends Module {
     }
 
     @EventHandler
-    private void onMouseClick(MouseClickEvent event) {
-        if (event.action != KeyAction.Press || event.button() != GLFW_MOUSE_BUTTON_MIDDLE || mc.currentScreen != null) return;
-
-        if (disabledByCreative()) return;
+    private void onMouseButton(MouseButtonEvent event) {
+        if (event.action != KeyAction.Press || event.button != GLFW_MOUSE_BUTTON_MIDDLE || mc.currentScreen != null) return;
 
         if (mode.get() == Mode.AddFriend) {
             if (mc.targetedEntity == null) return;
@@ -114,11 +99,7 @@ public class MiddleClickExtra extends Module {
             if (!Friends.get().isFriend(player)) {
                 Friends.get().add(new Friend(player));
                 info("Added %s to friends", player.getName().getString());
-                if (message.get()) {
-                    String messageNotify = friendMessage.get().replace("%player", player.getName().getString());
-                    ChatUtils.sendPlayerMsg(messageNotify);
-                }
-
+                if (message.get()) ChatUtils.sendPlayerMsg("/msg " + player.getName() + " I just friended you on Meteor.");
             } else {
                 Friends.get().remove(Friends.get().get(player));
                 info("Removed %s from friends", player.getName().getString());
@@ -133,7 +114,7 @@ public class MiddleClickExtra extends Module {
             return;
         }
 
-        selectedSlot = mc.player.getInventory().getSelectedSlot();
+        selectedSlot = mc.player.getInventory().selectedSlot;
         itemSlot = result.slot();
         wasHeld = result.isMainHand();
 
@@ -199,17 +180,10 @@ public class MiddleClickExtra extends Module {
         }
     }
 
-    private boolean disabledByCreative() {
-        if (mc.player == null) return false;
-
-        return disableInCreative.get() && mc.player.getGameMode() == GameMode.CREATIVE;
-    }
-
     public enum Mode {
         Pearl(Items.ENDER_PEARL, true),
         XP(Items.EXPERIENCE_BOTTLE, true),
         Rocket(Items.FIREWORK_ROCKET, true),
-        WindCharge(Items.WIND_CHARGE, true),
 
         Bow(Items.BOW, false),
         Gap(Items.GOLDEN_APPLE, false),

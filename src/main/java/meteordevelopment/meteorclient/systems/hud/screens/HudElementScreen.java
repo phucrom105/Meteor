@@ -22,6 +22,7 @@ import meteordevelopment.meteorclient.systems.hud.XAnchor;
 import meteordevelopment.meteorclient.systems.hud.YAnchor;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.nbt.NbtCompound;
 
 import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
 
@@ -135,12 +136,19 @@ public class HudElementScreen extends WindowScreen {
 
     @Override
     public boolean toClipboard() {
-        return NbtUtils.toClipboard(element);
+        return NbtUtils.toClipboard(element.info.title, element.toTag());
     }
 
     @Override
     public boolean fromClipboard() {
-        return NbtUtils.fromClipboard(element);
+        NbtCompound clipboard = NbtUtils.fromClipboard(element.toTag());
+
+        if (clipboard != null) {
+            element.fromTag(clipboard);
+            return true;
+        }
+
+        return false;
     }
 
 }

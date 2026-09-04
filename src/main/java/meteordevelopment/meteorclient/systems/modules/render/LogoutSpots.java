@@ -19,11 +19,11 @@ import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.world.dimension.DimensionType;
 import org.joml.Vector3d;
 
 import java.util.ArrayList;
@@ -98,7 +98,7 @@ public class LogoutSpots extends Module {
     private final List<PlayerEntity> lastPlayers = new ArrayList<>();
 
     private int timer;
-    private DimensionType lastDimension;
+    private Dimension lastDimension;
 
     public LogoutSpots() {
         super(Categories.Render, "logout-spots", "Displays a box where another player has logged out at.");
@@ -111,7 +111,7 @@ public class LogoutSpots extends Module {
         updateLastPlayers();
 
         timer = 10;
-        lastDimension = mc.world.getDimension();
+        lastDimension = PlayerUtils.getDimension();
     }
 
     @Override
@@ -152,7 +152,7 @@ public class LogoutSpots extends Module {
                 if (mc.getNetworkHandler().getPlayerList().stream().anyMatch(playerListEntry -> playerListEntry.getProfile().equals(entry.getProfile()))) continue;
 
                 for (PlayerEntity player : lastPlayers) {
-                    if (player.getUuid().equals(entry.getProfile().id())) {
+                    if (player.getUuid().equals(entry.getProfile().getId())) {
                         add(new Entry(player));
                     }
                 }
@@ -170,7 +170,7 @@ public class LogoutSpots extends Module {
             timer--;
         }
 
-        DimensionType dimension = mc.world.getDimension();
+        Dimension dimension = PlayerUtils.getDimension();
         if (dimension != lastDimension) players.clear();
         lastDimension = dimension;
     }
@@ -253,7 +253,7 @@ public class LogoutSpots extends Module {
             double i = text.getWidth(name) / 2.0 + text.getWidth(healthText) / 2.0;
             Renderer2D.COLOR.begin();
             Renderer2D.COLOR.quad(-i, 0, i * 2, text.getHeight(), nameBackgroundColor.get());
-            Renderer2D.COLOR.render();
+            Renderer2D.COLOR.render(null);
 
             // Render name and health texts
             text.beginBig();

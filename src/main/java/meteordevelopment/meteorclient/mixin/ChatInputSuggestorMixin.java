@@ -5,7 +5,6 @@
 
 package meteordevelopment.meteorclient.mixin;
 
-import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.suggestion.Suggestions;
@@ -20,10 +19,9 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 
 import java.util.concurrent.CompletableFuture;
-
-import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 @Mixin(ChatInputSuggestor.class)
 public abstract class ChatInputSuggestorMixin {
@@ -38,9 +36,9 @@ public abstract class ChatInputSuggestorMixin {
 
     @Inject(method = "refresh",
         at = @At(value = "INVOKE", target = "Lcom/mojang/brigadier/StringReader;canRead()Z", remap = false),
-        cancellable = true
-    )
-    public void onRefresh(CallbackInfo ci, @Local StringReader reader) {
+        cancellable = true,
+        locals = LocalCapture.CAPTURE_FAILHARD)
+    public void onRefresh(CallbackInfo ci, String string, StringReader reader) {
         String prefix = Config.get().prefix.get();
         int length = prefix.length();
 
@@ -48,11 +46,11 @@ public abstract class ChatInputSuggestorMixin {
             reader.setCursor(reader.getCursor() + length);
 
             if (this.parse == null) {
-                this.parse = Commands.DISPATCHER.parse(reader, mc.getNetworkHandler().getCommandSource());
+                this.parse = Commands.DISPATCHER.parse(reader, Commands.COMMAND_SOURCE);
             }
 
             int cursor = textField.getCursor();
-            if (cursor >= length && (this.window == null || !this.completingSuggestions)) {
+            if (cursor >= 1 && (this.window == null || !this.completingSuggestions)) {
                 this.pendingSuggestions = Commands.DISPATCHER.getCompletionSuggestions(this.parse, cursor);
                 this.pendingSuggestions.thenRun(() -> {
                     if (this.pendingSuggestions.isDone()) {

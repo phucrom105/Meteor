@@ -17,9 +17,6 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class FakePlayerManager {
     private static final List<FakePlayerEntity> ENTITIES = new ArrayList<>();
 
-    private FakePlayerManager() {
-    }
-
     public static List<FakePlayerEntity> getFakePlayers() {
         return ENTITIES;
     }

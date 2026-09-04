@@ -5,7 +5,6 @@
 
 package meteordevelopment.meteorclient.systems.modules.player;
 
-import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.pathing.PathManagers;
@@ -29,13 +28,12 @@ import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.registry.entry.RegistryEntry;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class AutoGap extends Module {
-    @SuppressWarnings("unchecked")
     private static final Class<? extends Module>[] AURAS = new Class[] { KillAura.class, CrystalAura.class, AnchorAura.class, BedAura.class };
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -73,22 +71,6 @@ public class AutoGap extends Module {
     );
 
     // Potions
-    private final Setting<Boolean> beforeExpiry = sgPotions.add(new BoolSetting.Builder()
-        .name("before-expiry")
-        .description("If it should eat before potion effects expire.")
-        .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Integer> expiryThreshold = sgPotions.add(new IntSetting.Builder()
-        .name("expiry-threshold")
-        .description("Time in ticks before the potion effect expires to start eating.")
-        .defaultValue(60)
-        .min(0)
-        .sliderMax(200)
-        .visible(beforeExpiry::get)
-        .build()
-    );
 
     private final Setting<Boolean> potionsRegeneration = sgPotions.add(new BoolSetting.Builder()
         .name("potions-regeneration")
@@ -105,9 +87,9 @@ public class AutoGap extends Module {
         .build()
     );
 
-    private final Setting<Boolean> potionsAbsorption = sgPotions.add(new BoolSetting.Builder()
+    private final Setting<Boolean> potionsResistance = sgPotions.add(new BoolSetting.Builder()
         .name("potions-absorption")
-        .description("If it should eat when Absorption runs out. Requires E-Gaps.")
+        .description("If it should eat when Resistance runs out. Requires E-Gaps.")
         .defaultValue(false)
         .visible(allowEgap::get)
         .build()
@@ -136,7 +118,7 @@ public class AutoGap extends Module {
     private boolean eating;
     private int slot, prevSlot;
 
-    private final List<Class<? extends Module>> wasAura = new ReferenceArrayList<>();
+    private final List<Class<? extends Module>> wasAura = new ArrayList<>();
     private boolean wasBaritone;
 
     public AutoGap() {
@@ -195,7 +177,7 @@ public class AutoGap extends Module {
     }
 
     private void startEating() {
-        prevSlot = mc.player.getInventory().getSelectedSlot();
+        prevSlot = mc.player.getInventory().selectedSlot;
         eat();
 
         // Pause auras
@@ -236,8 +218,10 @@ public class AutoGap extends Module {
         // Resume auras
         if (pauseAuras.get()) {
             for (Class<? extends Module> klass : AURAS) {
-                if (wasAura.contains(klass)) {
-                    Modules.get().get(klass).enable();
+                Module module = Modules.get().get(klass);
+
+                if (wasAura.contains(klass) && !module.isActive()) {
+                    module.toggle();
                 }
             }
         }
@@ -266,30 +250,21 @@ public class AutoGap extends Module {
     }
 
     private boolean shouldEatPotions() {
-        Map<RegistryEntry<StatusEffect>, StatusEffectInstance> effects = mc.player.getActiveStatusEffects();
+        Map<StatusEffect, StatusEffectInstance> effects = mc.player.getActiveStatusEffects();
 
         // Regeneration
-        if (potionsRegeneration.get()) {
-            StatusEffectInstance effect = effects.get(StatusEffects.REGENERATION);
-            if (effect == null || (beforeExpiry.get() && effect.getDuration() <= expiryThreshold.get())) return true;
-        }
+        if (potionsRegeneration.get() && !effects.containsKey(StatusEffects.REGENERATION)) return true;
 
         // Fire resistance
-        if (potionsFireResistance.get()) {
-            StatusEffectInstance effect = effects.get(StatusEffects.FIRE_RESISTANCE);
-            if (effect == null || (beforeExpiry.get() && effect.getDuration() <= expiryThreshold.get())) {
-                requiresEGap = true;
-                return true;
-            }
+        if (potionsFireResistance.get() && !effects.containsKey(StatusEffects.FIRE_RESISTANCE)) {
+            requiresEGap = true;
+            return true;
         }
 
         // Absorption
-        if (potionsAbsorption.get()) {
-            StatusEffectInstance effect = effects.get(StatusEffects.ABSORPTION);
-            if (effect == null || (beforeExpiry.get() && effect.getDuration() <= expiryThreshold.get())) {
-                requiresEGap = true;
-                return true;
-            }
+        if (potionsResistance.get() && !effects.containsKey(StatusEffects.RESISTANCE)) {
+            requiresEGap = true;
+            return true;
         }
 
         return false;
@@ -303,26 +278,31 @@ public class AutoGap extends Module {
     }
 
     private int findSlot() {
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        boolean preferEGap = this.allowEgap.get() || requiresEGap;
+        int slot = -1;
 
+        for (int i = 0; i < 9; i++) {
             // Skip if item stack is empty
+            ItemStack stack = mc.player.getInventory().getStack(i);
             if (stack.isEmpty()) continue;
 
             // Skip if item isn't a gap or egap
             if (isNotGapOrEGap(stack)) continue;
-
             Item item = stack.getItem();
 
-            // If egap was found and allowEgapSetting is true we can return the current slot
-            if (item == Items.ENCHANTED_GOLDEN_APPLE && allowEgap.get()) return i;
-
+            // If egap was found and preferEGap is true we can return the current slot
+            if (item == Items.ENCHANTED_GOLDEN_APPLE && preferEGap) {
+                slot = i;
+                break;
+            }
             // If gap was found and egap is not required we can return the current slot
-            if (item == Items.GOLDEN_APPLE && !requiresEGap) return i;
+            else if (item == Items.GOLDEN_APPLE && !requiresEGap) {
+                slot = i;
+                if (!preferEGap) break;
+            }
         }
 
-        // No suitable gap or egap found
-        return -1;
+        return slot;
     }
 
     private boolean isNotGapOrEGap(ItemStack stack) {

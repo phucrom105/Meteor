@@ -10,11 +10,12 @@ import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.commands.arguments.PlayerArgumentType;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
-import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
-import meteordevelopment.meteorclient.utils.misc.input.Input;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
+
+import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class SpectateCommand extends Command {
 
@@ -42,16 +43,7 @@ public class SpectateCommand extends Command {
     private static class StaticListener {
         @EventHandler
         private void onKey(KeyEvent event) {
-            if (Input.isPressed(mc.options.sneakKey)) {
-                mc.setCameraEntity(mc.player);
-                event.cancel();
-                MeteorClient.EVENT_BUS.unsubscribe(this);
-            }
-        }
-
-        @EventHandler
-        private void onMouse(MouseClickEvent event) {
-            if (Input.isPressed(mc.options.sneakKey)) {
+            if (mc.options.sneakKey.matchesKey(event.key, 0) || mc.options.sneakKey.matchesMouse(event.key)) {
                 mc.setCameraEntity(mc.player);
                 event.cancel();
                 MeteorClient.EVENT_BUS.unsubscribe(this);

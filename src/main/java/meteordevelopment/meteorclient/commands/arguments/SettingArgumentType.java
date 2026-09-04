@@ -14,7 +14,6 @@ import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.Settings;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
@@ -32,14 +31,9 @@ public class SettingArgumentType implements ArgumentType<String> {
 
     public static Setting<?> get(CommandContext<?> context) throws CommandSyntaxException {
         Module module = context.getArgument("module", Module.class);
-
-        return get(context, module.settings);
-    }
-
-    public static Setting<?> get(CommandContext<?> context, Settings settings) throws CommandSyntaxException {
         String settingName = context.getArgument("setting", String.class);
 
-        Setting<?> setting = settings.get(settingName);
+        Setting<?> setting = module.settings.get(settingName);
         if (setting == null) throw NO_SUCH_SETTING.create(settingName);
 
         return setting;
@@ -54,13 +48,9 @@ public class SettingArgumentType implements ArgumentType<String> {
 
     @Override
     public <S> CompletableFuture<Suggestions> listSuggestions(CommandContext<S> context, SuggestionsBuilder builder) {
-        return listSuggestions(builder, context.getArgument("module", Module.class).settings);
-    }
-
-    public static CompletableFuture<Suggestions> listSuggestions(SuggestionsBuilder builder, Settings settings) {
-        Stream<String> stream = Streams.stream(settings.iterator())
-            .flatMap(sg -> Streams.stream(sg.iterator()))
-            .map(setting -> setting.name);
+        Stream<String> stream = Streams.stream(context.getArgument("module", Module.class).settings.iterator())
+                .flatMap(settings -> Streams.stream(settings.iterator()))
+                .map(setting -> setting.name);
 
         return CommandSource.suggestMatching(stream, builder);
     }

@@ -56,7 +56,7 @@ public class ColorSetting extends Setting<SettingColor> {
 
     @Override
     public SettingColor load(NbtCompound tag) {
-        get().fromTag(tag.getCompoundOrEmpty("value"));
+        get().fromTag(tag.getCompound("value"));
 
         return get();
     }

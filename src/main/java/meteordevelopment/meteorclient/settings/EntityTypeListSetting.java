@@ -24,7 +24,7 @@ import java.util.function.Predicate;
 
 public class EntityTypeListSetting extends Setting<Set<EntityType<?>>> {
     public final Predicate<EntityType<?>> filter;
-    private List<String> suggestions;
+    private static List<String> suggestions;
     private final static List<String> groups = List.of("animal", "wateranimal", "monster", "ambient", "misc");
 
     public EntityTypeListSetting(String name, String description, Set<EntityType<?>> defaultValue, Consumer<Set<EntityType<?>>> onChanged, Consumer<Setting<Set<EntityType<?>>>> onModuleActivated, IVisible visible, Predicate<EntityType<?>> filter) {
@@ -51,9 +51,7 @@ public class EntityTypeListSetting extends Setting<Set<EntityType<?>>> {
                     String lowerValue = value.trim().toLowerCase();
                     if (!groups.contains(lowerValue)) continue;
 
-                    for (EntityType<?> entityType : Registries.ENTITY_TYPE) {
-                        if (filter != null && !filter.test(entityType)) continue;
-
+                    Registries.ENTITY_TYPE.forEach(entityType -> {
                         switch (lowerValue) {
                             case "animal" -> {
                                 if (entityType.getSpawnGroup() == SpawnGroup.CREATURE) entities.add(entityType);
@@ -74,7 +72,7 @@ public class EntityTypeListSetting extends Setting<Set<EntityType<?>>> {
                                 if (entityType.getSpawnGroup() == SpawnGroup.MISC) entities.add(entityType);
                             }
                         }
-                    }
+                    });
                 }
             }
         } catch (Exception ignored) {}
@@ -91,9 +89,7 @@ public class EntityTypeListSetting extends Setting<Set<EntityType<?>>> {
     public List<String> getSuggestions() {
         if (suggestions == null) {
             suggestions = new ArrayList<>(groups);
-            for (EntityType<?> entityType : Registries.ENTITY_TYPE) {
-                if (filter == null || filter.test(entityType)) suggestions.add(Registries.ENTITY_TYPE.getId(entityType).toString());
-            }
+            Registries.ENTITY_TYPE.getIds().forEach(id -> suggestions.add(id.toString()));
         }
 
         return suggestions;
@@ -114,9 +110,9 @@ public class EntityTypeListSetting extends Setting<Set<EntityType<?>>> {
     public Set<EntityType<?>> load(NbtCompound tag) {
         get().clear();
 
-        NbtList valueTag = tag.getListOrEmpty("value");
+        NbtList valueTag = tag.getList("value", 8);
         for (NbtElement tagI : valueTag) {
-            EntityType<?> type = Registries.ENTITY_TYPE.get(Identifier.of(tagI.asString().orElse("")));
+            EntityType<?> type = Registries.ENTITY_TYPE.get(new Identifier(tagI.asString()));
             if (filter == null || filter.test(type)) get().add(type);
         }
 

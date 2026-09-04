@@ -5,31 +5,44 @@
 
 package meteordevelopment.meteorclient.utils.files;
 
-import meteordevelopment.meteorclient.MeteorClient;
-import org.apache.commons.io.IOUtils;
-
 import java.io.*;
 
 public class StreamUtils {
-    private StreamUtils() {
-    }
-
     public static void copy(File from, File to) {
-        try (InputStream in = new FileInputStream(from);
-             OutputStream out = new FileOutputStream(to)) {
-            in.transferTo(out);
+        try {
+            InputStream in = new FileInputStream(from);
+            OutputStream out = new FileOutputStream(to);
+
+            copy(in, out);
+
+            in.close();
+            out.close();
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error copying from file '{}' to file '{}'.", from.getName(), to.getName(), e);
+            e.printStackTrace();
         }
     }
 
     public static void copy(InputStream in, File to) {
-        try (OutputStream out = new FileOutputStream(to)) {
-            in.transferTo(out);
+        try {
+            OutputStream out = new FileOutputStream(to);
+
+            copy(in, out);
+
+            in.close();
+            out.close();
         } catch (IOException e) {
-            MeteorClient.LOG.error("Error writing to file '{}'.", to.getName());
-        } finally {
-            IOUtils.closeQuietly(in);
+            e.printStackTrace();
+        }
+    }
+
+    public static void copy(InputStream in, OutputStream out) {
+        byte[] bytes = new byte[512];
+        int read;
+
+        try {
+            while ((read = in.read(bytes)) != -1) out.write(bytes, 0, read);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 }

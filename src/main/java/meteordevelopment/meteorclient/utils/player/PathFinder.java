@@ -21,8 +21,8 @@ import java.util.ArrayList;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class PathFinder {
-    private static final int PATH_AHEAD = 3;
-    private static final int QUAD_1 = 1, QUAD_2 = 2, SOUTH = 0, NORTH = 180;
+    private final static int PATH_AHEAD = 3;
+    private final static int QUAD_1 = 1, QUAD_2 = 2, SOUTH = 0, NORTH = 180;
     private final ArrayList<PathBlock> path = new ArrayList<>(PATH_AHEAD);
     private Entity target;
     private PathBlock currentPathBlock;
@@ -59,7 +59,7 @@ public class PathFinder {
     public Vec3d getNextStraightPos() {
         Vec3d nextPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
         double multiplier = 1.0;
-        while (nextPos == mc.player.getEntityPos()) {
+        while (nextPos == mc.player.getPos()) {
             nextPos = new Vec3d((int) (mc.player.getX() + multiplier * Math.cos(Math.toRadians(mc.player.getYaw()))), (int) (mc.player.getY()), (int) (mc.player.getZ() + multiplier * Math.sin(Math.toRadians(mc.player.getYaw()))));
             multiplier += .1;
         }
@@ -68,9 +68,9 @@ public class PathFinder {
 
     public int getYawToTarget() {
         if (target == null || mc.player == null) return Integer.MAX_VALUE;
-        Vec3d tPos = target.getEntityPos();
-        Vec3d pPos = mc.player.getEntityPos();
-        int yaw;
+        Vec3d tPos = target.getPos();
+        Vec3d pPos = mc.player.getPos();
+        int yaw = 0;
         int direction = getDirection();
         double tan = (tPos.z - pPos.z) / (tPos.x - pPos.x);
         if (direction == QUAD_1)
@@ -83,8 +83,8 @@ public class PathFinder {
 
     public int getDirection() {
         if (target == null || mc.player == null) return 0;
-        Vec3d targetPos = target.getEntityPos();
-        Vec3d playerPos = mc.player.getEntityPos();
+        Vec3d targetPos = target.getPos();
+        Vec3d playerPos = mc.player.getPos();
         if (targetPos.x == playerPos.x && targetPos.z > playerPos.z)
             return SOUTH;
         if (targetPos.x == playerPos.x && targetPos.z < playerPos.z)
@@ -137,7 +137,7 @@ public class PathFinder {
         if (target != null && mc.player != null) {
             if (!PlayerUtils.isWithin(target, 3)) {
                 if (currentPathBlock == null) currentPathBlock = getNextPathBlock();
-                if (mc.player.getEntityPos().squaredDistanceTo(new Vec3d(currentPathBlock.blockPos.getX(), currentPathBlock.blockPos.getY(), currentPathBlock.blockPos.getZ())) < .01)
+                if (mc.player.getPos().squaredDistanceTo(new Vec3d(currentPathBlock.blockPos.getX(), currentPathBlock.blockPos.getY(), currentPathBlock.blockPos.getZ())) < .01)
                     currentPathBlock = getNextPathBlock();
                 lookAtDestination(currentPathBlock);
                 if (!mc.options.forwardKey.isPressed())

@@ -5,11 +5,9 @@
 
 package meteordevelopment.meteorclient.gui.screens;
 
-import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.meteor.ActiveModulesChangedEvent;
 import meteordevelopment.meteorclient.events.meteor.ModuleBindChangedEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
-import meteordevelopment.meteorclient.gui.WidgetScreen;
 import meteordevelopment.meteorclient.gui.WindowScreen;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.gui.utils.Cell;
@@ -24,11 +22,8 @@ import meteordevelopment.meteorclient.gui.widgets.pressable.WFavorite;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
-import meteordevelopment.meteorclient.utils.render.prompts.OkPrompt;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.nbt.NbtCompound;
-
-import java.util.Optional;
 
 import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
 
@@ -51,14 +46,8 @@ public class ModuleScreen extends WindowScreen {
         // Description
         add(theme.label(module.description, getWindowWidth() / 2.0));
 
-        if (module.addon != null && module.addon != MeteorClient.ADDON) {
-            WHorizontalList addon = add(theme.horizontalList()).expandX().widget();
-            addon.add(theme.label("From: ").color(theme.textSecondaryColor())).widget();
-            addon.add(theme.label(module.addon.name).color(module.addon.color)).widget();
-        }
-
         // Settings
-        if (!module.settings.groups.isEmpty()) {
+        if (module.settings.groups.size() > 0) {
             settingsContainer = add(theme.verticalList()).expandX().widget();
             settingsContainer.add(theme.settings(module.settings)).expandX();
         }
@@ -84,7 +73,6 @@ public class ModuleScreen extends WindowScreen {
 
         WButton reset = bind.add(theme.button(GuiRenderer.RESET)).expandCellX().right().widget();
         reset.action = keybind::resetBind;
-        reset.tooltip = "Reset";
 
         // Toggle on bind release
         WHorizontalList tobr = section.add(theme.horizontalList()).widget();
@@ -105,32 +93,12 @@ public class ModuleScreen extends WindowScreen {
         // Bottom
         WHorizontalList bottom = add(theme.horizontalList()).expandX().widget();
 
-        // Active
+        //   Active
         bottom.add(theme.label("Active: "));
         active = bottom.add(theme.checkbox(module.isActive())).expandCellX().widget();
         active.action = () -> {
             if (module.isActive() != active.checked) module.toggle();
         };
-
-        // Config sharing
-        WHorizontalList sharing = bottom.add(theme.horizontalList()).right().widget();
-        WButton copy = sharing.add(theme.button(GuiRenderer.COPY)).widget();
-        copy.action = () -> {
-            if (toClipboard()) {
-                OkPrompt.create()
-                    .title("Module copied!")
-                    .message("The settings for this module are now in your clipboard.")
-                    .message("You can also copy settings using Ctrl+C.")
-                    .message("Settings can be imported using Ctrl+V or the paste button.")
-                    .id("config-sharing-guide")
-                    .show();
-            }
-        };
-        copy.tooltip = "Copy config";
-
-        WButton paste = sharing.add(theme.button(GuiRenderer.PASTE)).widget();
-        paste.action = this::fromClipboard;
-        paste.tooltip = "Paste config";
     }
 
     @Override
@@ -157,30 +125,18 @@ public class ModuleScreen extends WindowScreen {
 
     @Override
     public boolean toClipboard() {
-        NbtCompound tag = new NbtCompound();
-
-        tag.putString("name", module.name);
-
-        NbtCompound settingsTag = module.settings.toTag();
-        if (!settingsTag.isEmpty()) tag.put("settings", settingsTag);
-
-        return NbtUtils.toClipboard(tag);
+        return NbtUtils.toClipboard(module.title, module.toTag());
     }
 
     @Override
     public boolean fromClipboard() {
-        NbtCompound tag = NbtUtils.fromClipboard();
-        if (tag == null) return false;
-        if (!tag.getString("name", "").equals(module.name)) return false;
+        NbtCompound clipboard = NbtUtils.fromClipboard(module.toTag());
 
-        Optional<NbtCompound> settings = tag.getCompound("settings");
+        if (clipboard != null) {
+            module.fromTag(clipboard);
+            return true;
+        }
 
-        if (settings.isPresent()) module.settings.fromTag(settings.get());
-        else module.settings.reset();
-
-        if (parent instanceof WidgetScreen p) p.reload();
-        reload();
-
-        return true;
+        return false;
     }
 }

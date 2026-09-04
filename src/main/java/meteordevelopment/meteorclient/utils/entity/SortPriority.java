@@ -15,7 +15,7 @@ import java.util.Comparator;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public enum SortPriority implements Comparator<Entity> {
-    LowestDistance(Comparator.comparingDouble(PlayerUtils::squaredDistanceTo)),
+    LowestDistance((e1, e2) -> Double.compare(PlayerUtils.squaredDistanceTo(e1), PlayerUtils.squaredDistanceTo(e2))),
     HighestDistance((e1, e2) -> Double.compare(PlayerUtils.squaredDistanceTo(e2), PlayerUtils.squaredDistanceTo(e1))),
     LowestHealth(SortPriority::sortHealth),
     HighestHealth((e1, e2) -> sortHealth(e2, e1)),

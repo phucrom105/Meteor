@@ -15,8 +15,8 @@ import net.minecraft.nbt.NbtIo;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
-import java.util.ListIterator;
 
 public class GuiThemes {
     private static final File FOLDER = new File(MeteorClient.FOLDER, "gui");
@@ -25,9 +25,6 @@ public class GuiThemes {
 
     private static final List<GuiTheme> themes = new ArrayList<>();
     private static GuiTheme theme;
-
-    private GuiThemes() {
-    }
 
     @PreInit
     public static void init() {
@@ -40,7 +37,7 @@ public class GuiThemes {
             try {
                 NbtCompound tag = NbtIo.read(FILE.toPath());
 
-                if (tag != null) select(tag.getString("currentTheme", ""));
+                if (tag != null) select(tag.getString("currentTheme"));
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -50,13 +47,12 @@ public class GuiThemes {
     }
 
     public static void add(GuiTheme theme) {
-        for (ListIterator<GuiTheme> it = themes.listIterator(); it.hasNext();) {
+        for (Iterator<GuiTheme> it = themes.iterator(); it.hasNext();) {
             if (it.next().name.equals(theme.name)) {
-                // Replace the old one with same name
-                it.set(theme);
+                it.remove();
 
                 MeteorClient.LOG.error("Theme with the name '{}' has already been added.", theme.name);
-                return;
+                break;
             }
         }
 

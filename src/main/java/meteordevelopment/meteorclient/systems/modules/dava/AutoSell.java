@@ -17,10 +17,11 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.LoreComponent;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtList;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.text.Text;
@@ -126,7 +127,7 @@ public class AutoSell extends Module {
     private StatsAccumulator statsAccumulator;
 
     public AutoSell() {
-        super(Categories.Dava, "autosell", "Automatically sends /kho sellall when the Dava storage reaches a usage threshold.", "auto-kho-sellall", "kho-sell-all");
+        super(Categories.Dava, "autosell", "Automatically sends /kho sellall when the Dava storage reaches a usage threshold.");
     }
 
     @Override
@@ -250,7 +251,7 @@ public class AutoSell extends Module {
         statsResponseDeadline = now + secondsToNanos(statsTimeout.get());
         commandCooldownUntil = now + secondsToNanos(delay.get());
         lastCommand = Command.STATS;
-        ChatUtils.sendPlayerMsg("/kho stats", false);
+        ChatUtils.sendPlayerMsg("/kho stats");
     }
 
     private boolean trySendPendingSell() {
@@ -260,7 +261,7 @@ public class AutoSell extends Module {
         commandCooldownUntil = now + secondsToNanos(delay.get());
         nextStatsAt = now + secondsToNanos(statsInterval.get());
         lastCommand = Command.SELLALL;
-        ChatUtils.sendPlayerMsg("/kho sellall", false);
+        ChatUtils.sendPlayerMsg("/kho sellall");
         sellPending = false;
         triggerArmed = false;
         return true;
@@ -371,18 +372,29 @@ public class AutoSell extends Module {
         List<String> lines = new ArrayList<>();
         lines.add(stack.getName().getString());
 
-        Text customName = stack.get(DataComponentTypes.CUSTOM_NAME);
-        if (customName != null) lines.add(customName.getString());
+        NbtCompound nbt = stack.getNbt();
+        if (nbt == null || !nbt.contains("display", NbtElement.COMPOUND_TYPE)) return lines;
 
-        Text itemName = stack.get(DataComponentTypes.ITEM_NAME);
-        if (itemName != null) lines.add(itemName.getString());
+        NbtCompound display = nbt.getCompound("display");
+        if (display.contains("Name", NbtElement.STRING_TYPE)) {
+            addJsonText(lines, display.getString("Name"));
+        }
 
-        LoreComponent lore = stack.get(DataComponentTypes.LORE);
-        if (lore != null) {
-            for (Text line : lore.lines()) lines.add(line.getString());
+        if (display.contains("Lore", NbtElement.LIST_TYPE)) {
+            NbtList lore = display.getList("Lore", NbtElement.STRING_TYPE);
+            for (NbtElement line : lore) addJsonText(lines, line.asString());
         }
 
         return lines;
+    }
+
+    private static void addJsonText(List<String> lines, String json) {
+        try {
+            Text text = Text.Serialization.fromJson(json);
+            if (text != null) lines.add(text.getString());
+        } catch (Exception ignored) {
+            lines.add(json);
+        }
     }
 
     private static long parseAmount(String value) {

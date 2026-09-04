@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.renderer.text;
 import meteordevelopment.meteorclient.renderer.Fonts;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.client.util.math.MatrixStack;
 
 public interface TextRenderer {
     static TextRenderer get() {
@@ -34,5 +35,6 @@ public interface TextRenderer {
 
     boolean isBuilding();
 
-    void end();
+    default void end() { end(null); }
+    void end(MatrixStack matrices);
 }

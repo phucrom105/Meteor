@@ -39,19 +39,19 @@ public class TimeChanger extends Module {
 
     @Override
     public void onDeactivate() {
-        mc.world.getLevelProperties().setTimeOfDay(oldTime);
+        mc.world.setTimeOfDay(oldTime);
     }
 
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
         if (event.packet instanceof WorldTimeUpdateS2CPacket) {
-            oldTime = ((WorldTimeUpdateS2CPacket) event.packet).timeOfDay();
+            oldTime = ((WorldTimeUpdateS2CPacket) event.packet).getTime();
             event.cancel();
         }
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        mc.world.getLevelProperties().setTimeOfDay(time.get().longValue());
+        mc.world.setTimeOfDay(time.get().longValue());
     }
 }

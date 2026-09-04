@@ -6,7 +6,7 @@
 package meteordevelopment.meteorclient.mixininterface;
 
 public interface ICapabilityTracker {
-    boolean meteor$get();
+    boolean get();
 
-    void meteor$set(boolean state);
+    void set(boolean state);
 }

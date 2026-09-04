@@ -11,15 +11,16 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixininterface.IPlayerInteractEntityC2SPacket;
 import meteordevelopment.meteorclient.mixininterface.IPlayerMoveC2SPacket;
 import meteordevelopment.meteorclient.mixininterface.IVec3d;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.item.MaceItem;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
@@ -27,7 +28,6 @@ import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 public class Criticals extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgMace = settings.createGroup("Mace");
 
     private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
@@ -40,34 +40,13 @@ public class Criticals extends Module {
         .name("only-killaura")
         .description("Only performs crits when using killaura.")
         .defaultValue(false)
-        .visible(() -> mode.get() != Mode.None)
         .build()
-    );
-
-    private final Setting<Boolean> mace = sgMace.add(new BoolSetting.Builder()
-        .name("smash-attack")
-        .description("Will always perform smash attacks when using a mace.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Double> extraHeight = sgMace.add(new DoubleSetting.Builder()
-    	.name("additional-height")
-    	.description("The amount of additional height to spoof. More height means more damage.")
-    	.defaultValue(0.0)
-        .min(0)
-        .sliderRange(0, 100)
-        .visible(mace::get)
-    	.build()
     );
 
     private PlayerInteractEntityC2SPacket attackPacket;
     private HandSwingC2SPacket swingPacket;
     private boolean sendPackets;
     private int sendTimer;
-    private double lastY;
-    private boolean waitingForPeak;
-
     public Criticals() {
         super(Categories.Combat, "criticals", "Performs critical attacks when you hit your target.");
     }
@@ -78,56 +57,36 @@ public class Criticals extends Module {
         swingPacket = null;
         sendPackets = false;
         sendTimer = 0;
-        lastY = 0;
-        waitingForPeak = false;
     }
 
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
-        if (event.packet instanceof IPlayerInteractEntityC2SPacket packet && packet.meteor$getType() == PlayerInteractEntityC2SPacket.InteractType.ATTACK) {
-            if (mace.get() && mc.player.getMainHandStack().getItem() instanceof MaceItem) {
-                if (mc.player.isGliding()) return;
+        if (event.packet instanceof IPlayerInteractEntityC2SPacket packet && packet.getType() == PlayerInteractEntityC2SPacket.InteractType.ATTACK) {
+            if (skipCrit()) return;
 
-                sendPacket(0);
-                sendPacket(1.501 + extraHeight.get());
-                sendPacket(0);
-            } else {
-                if (skipCrit()) return;
+            Entity entity =  packet.getEntity();
 
-                Entity entity = packet.meteor$getEntity();
+            if (!(entity instanceof LivingEntity) || (entity != Modules.get().get(KillAura.class).getTarget() && ka.get())) return;
 
-                if (!(entity instanceof LivingEntity) || (entity != Modules.get().get(KillAura.class).getTarget() && ka.get()))
-                    return;
+            switch (mode.get()) {
+                case Packet -> {
+                    sendPacket(0.0625);
+                    sendPacket(0);
+                }
+                case Bypass -> {
+                    sendPacket(0.11);
+                    sendPacket(0.1100013579);
+                    sendPacket(0.0000013579);
+                }
+                default -> {
+                    if (!sendPackets) {
+                        sendPackets = true;
+                        sendTimer = mode.get() == Mode.Jump ? 6 : 4;
+                        attackPacket = (PlayerInteractEntityC2SPacket) event.packet;
 
-                switch (mode.get()) {
-                    case Packet -> {
-                        sendPacket(0.0625);
-                        sendPacket(0);
-                    }
-                    case UpdatedNCP -> {
-                        sendPacket(0.0000008);
-                        sendPacket(0);
-                    }
-                    case OldNCP -> {
-                        sendPacket(0.11);
-                        sendPacket(0.1100013579);
-                        sendPacket(0.0000013579);
-                    }
-                    case Jump, MiniJump -> {
-                        if (!sendPackets) {
-                            sendPackets = true;
-                            attackPacket = (PlayerInteractEntityC2SPacket) event.packet;
-
-                            if (mode.get() == Mode.Jump) {
-                                mc.player.jump();
-                                waitingForPeak = true;
-                                lastY = mc.player.getY();
-                            } else {
-                                ((IVec3d) mc.player.getVelocity()).meteor$setY(0.25);
-                                sendTimer = 4;
-                            }
-                            event.cancel();
-                        }
+                        if (mode.get() == Mode.Jump) mc.player.jump();
+                        else ((IVec3d) mc.player.getVelocity()).setY(0.25);
+                        event.cancel();
                     }
                 }
             }
@@ -137,6 +96,7 @@ public class Criticals extends Module {
 
             if (sendPackets && swingPacket == null) {
                 swingPacket = (HandSwingC2SPacket) event.packet;
+
                 event.cancel();
             }
         }
@@ -145,28 +105,15 @@ public class Criticals extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (sendPackets) {
-            if (mode.get() == Mode.Jump && waitingForPeak) {
-                double currentY = mc.player.getY();
-                if (currentY <= lastY) {
-                    waitingForPeak = false;
-                    sendTimer = 0; // Attack on next tick after reaching peak
-                }
-                lastY = currentY;
-                return;
-            }
-
             if (sendTimer <= 0) {
-                if (attackPacket == null || swingPacket == null) {
-                    sendPackets = false;
-                    return;
-                }
+                sendPackets = false;
+
+                if (attackPacket == null || swingPacket == null) return;
                 mc.getNetworkHandler().sendPacket(attackPacket);
                 mc.getNetworkHandler().sendPacket(swingPacket);
 
                 attackPacket = null;
                 swingPacket = null;
-
-                sendPackets = false;
             } else {
                 sendTimer--;
             }
@@ -178,15 +125,13 @@ public class Criticals extends Module {
         double y = mc.player.getY();
         double z = mc.player.getZ();
 
-        PlayerMoveC2SPacket packet = new PlayerMoveC2SPacket.PositionAndOnGround(x, y + height, z, false, false);
-        ((IPlayerMoveC2SPacket) packet).meteor$setTag(1337);
+        PlayerMoveC2SPacket packet = new PlayerMoveC2SPacket.PositionAndOnGround(x, y + height, z, false);
+        ((IPlayerMoveC2SPacket) packet).setTag(1337);
+
         mc.player.networkHandler.sendPacket(packet);
     }
 
     private boolean skipCrit() {
-        if (EntityUtils.isInCobweb(mc.player) && (mode.get() == Mode.Jump || mode.get() == Mode.MiniJump))
-            return true;
-
         return !mc.player.isOnGround() || mc.player.isSubmergedInWater() || mc.player.isInLava() || mc.player.isClimbing();
     }
 
@@ -196,10 +141,8 @@ public class Criticals extends Module {
     }
 
     public enum Mode {
-        None,
         Packet,
-        UpdatedNCP,
-        OldNCP,
+        Bypass,
         Jump,
         MiniJump
     }
