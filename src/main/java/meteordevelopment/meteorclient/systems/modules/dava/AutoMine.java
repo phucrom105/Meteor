@@ -32,6 +32,113 @@ import net.minecraft.util.math.BlockPos;
 import java.util.List;
 
 public class AutoMine extends Module {
+    private static final List<Block> DEFAULT_MINING_BLOCKS = List.of(
+        // Stone and ores
+        Blocks.STONE,
+        Blocks.GRANITE,
+        Blocks.DIORITE,
+        Blocks.ANDESITE,
+        Blocks.TUFF,
+        Blocks.DEEPSLATE,
+        Blocks.NETHERRACK,
+        Blocks.BASALT,
+        Blocks.BLACKSTONE,
+        Blocks.COBBLESTONE,
+        Blocks.COAL_ORE,
+        Blocks.DEEPSLATE_COAL_ORE,
+        Blocks.COPPER_ORE,
+        Blocks.DEEPSLATE_COPPER_ORE,
+        Blocks.DIAMOND_ORE,
+        Blocks.DEEPSLATE_DIAMOND_ORE,
+        Blocks.EMERALD_ORE,
+        Blocks.DEEPSLATE_EMERALD_ORE,
+        Blocks.GOLD_ORE,
+        Blocks.NETHER_GOLD_ORE,
+        Blocks.DEEPSLATE_GOLD_ORE,
+        Blocks.IRON_ORE,
+        Blocks.DEEPSLATE_IRON_ORE,
+        Blocks.LAPIS_ORE,
+        Blocks.DEEPSLATE_LAPIS_ORE,
+        Blocks.REDSTONE_ORE,
+        Blocks.DEEPSLATE_REDSTONE_ORE,
+        Blocks.NETHER_QUARTZ_ORE,
+        Blocks.ANCIENT_DEBRIS,
+
+        // Resource blocks
+        Blocks.COAL_BLOCK,
+        Blocks.COPPER_BLOCK,
+        Blocks.DIAMOND_BLOCK,
+        Blocks.EMERALD_BLOCK,
+        Blocks.GOLD_BLOCK,
+        Blocks.IRON_BLOCK,
+        Blocks.LAPIS_BLOCK,
+        Blocks.NETHERITE_BLOCK,
+        Blocks.REDSTONE_BLOCK,
+        Blocks.RAW_COPPER_BLOCK,
+        Blocks.RAW_GOLD_BLOCK,
+        Blocks.RAW_IRON_BLOCK,
+
+        // Logs and stems
+        Blocks.OAK_LOG,
+        Blocks.OAK_WOOD,
+        Blocks.STRIPPED_OAK_LOG,
+        Blocks.STRIPPED_OAK_WOOD,
+        Blocks.SPRUCE_LOG,
+        Blocks.SPRUCE_WOOD,
+        Blocks.STRIPPED_SPRUCE_LOG,
+        Blocks.STRIPPED_SPRUCE_WOOD,
+        Blocks.BIRCH_LOG,
+        Blocks.BIRCH_WOOD,
+        Blocks.STRIPPED_BIRCH_LOG,
+        Blocks.STRIPPED_BIRCH_WOOD,
+        Blocks.JUNGLE_LOG,
+        Blocks.JUNGLE_WOOD,
+        Blocks.STRIPPED_JUNGLE_LOG,
+        Blocks.STRIPPED_JUNGLE_WOOD,
+        Blocks.ACACIA_LOG,
+        Blocks.ACACIA_WOOD,
+        Blocks.STRIPPED_ACACIA_LOG,
+        Blocks.STRIPPED_ACACIA_WOOD,
+        Blocks.DARK_OAK_LOG,
+        Blocks.DARK_OAK_WOOD,
+        Blocks.STRIPPED_DARK_OAK_LOG,
+        Blocks.STRIPPED_DARK_OAK_WOOD,
+        Blocks.PALE_OAK_LOG,
+        Blocks.PALE_OAK_WOOD,
+        Blocks.STRIPPED_PALE_OAK_LOG,
+        Blocks.STRIPPED_PALE_OAK_WOOD,
+        Blocks.MANGROVE_LOG,
+        Blocks.MANGROVE_WOOD,
+        Blocks.STRIPPED_MANGROVE_LOG,
+        Blocks.STRIPPED_MANGROVE_WOOD,
+        Blocks.CHERRY_LOG,
+        Blocks.CHERRY_WOOD,
+        Blocks.STRIPPED_CHERRY_LOG,
+        Blocks.STRIPPED_CHERRY_WOOD,
+        Blocks.CRIMSON_STEM,
+        Blocks.STRIPPED_CRIMSON_STEM,
+        Blocks.CRIMSON_HYPHAE,
+        Blocks.STRIPPED_CRIMSON_HYPHAE,
+        Blocks.WARPED_STEM,
+        Blocks.STRIPPED_WARPED_STEM,
+        Blocks.WARPED_HYPHAE,
+        Blocks.STRIPPED_WARPED_HYPHAE,
+
+        // Planks
+        Blocks.OAK_PLANKS,
+        Blocks.SPRUCE_PLANKS,
+        Blocks.BIRCH_PLANKS,
+        Blocks.JUNGLE_PLANKS,
+        Blocks.ACACIA_PLANKS,
+        Blocks.DARK_OAK_PLANKS,
+        Blocks.PALE_OAK_PLANKS,
+        Blocks.CRIMSON_PLANKS,
+        Blocks.WARPED_PLANKS,
+        Blocks.MANGROVE_PLANKS,
+        Blocks.BAMBOO_PLANKS,
+        Blocks.CHERRY_PLANKS
+    );
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgWhitelist = settings.createGroup("Whitelist");
 
@@ -52,13 +159,14 @@ public class AutoMine extends Module {
     private final Setting<ListMode> listMode = sgWhitelist.add(new EnumSetting.Builder<ListMode>()
         .name("list-mode")
         .description("How to filter supported blocks.")
-        .defaultValue(ListMode.Blacklist)
+        .defaultValue(ListMode.Whitelist)
         .build()
     );
 
     private final Setting<List<Block>> whitelist = sgWhitelist.add(new BlockListSetting.Builder()
         .name("whitelist")
         .description("The supported blocks to mine.")
+        .defaultValue(DEFAULT_MINING_BLOCKS)
         .visible(() -> listMode.get() == ListMode.Whitelist)
         .build()
     );
