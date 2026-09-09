@@ -176,7 +176,7 @@ public class AutoFix extends Module {
             return;
         }
 
-        int sourceId = SlotUtils.indexToId(mc.player.getInventory().selectedSlot);
+        int sourceId = SlotUtils.indexToId(mc.player.getInventory().getSelectedSlot());
         if (sourceId < 0 || sourceId >= handler.slots.size()) {
             stopSupermcAttempt();
             return;
