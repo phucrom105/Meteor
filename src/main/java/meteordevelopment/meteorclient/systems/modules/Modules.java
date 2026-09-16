@@ -572,6 +572,7 @@ public class Modules extends System<Modules> {
         add(new AutoPlant());
         add(new AutoSell());
         add(new DavaAutoReconnect());
+        add(new AntiAdmin());
     }
 
     private void initMisc() {
