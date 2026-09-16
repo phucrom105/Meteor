@@ -52,6 +52,8 @@ import java.util.Locale;
 import java.util.Map;
 
 public class AutoHarvest extends Module {
+    private static final int NEWLY_PLANTED_LOCK_TICKS = 200;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgMovement = settings.createGroup("Movement");
     private final SettingGroup sgInventory = settings.createGroup("Inventory");
@@ -264,6 +266,7 @@ public class AutoHarvest extends Module {
 
     private final List<BlockPos> targets = new ArrayList<>();
     private final Map<BlockPos, Integer> targetCooldowns = new HashMap<>();
+    private final Map<BlockPos, PlantedCropLock> newlyPlanted = new HashMap<>();
 
     private Item activeCrop;
     private int cropIndex;
@@ -287,6 +290,7 @@ public class AutoHarvest extends Module {
     public void onActivate() {
         targets.clear();
         targetCooldowns.clear();
+        newlyPlanted.clear();
         cropIndex = 0;
         activeCrop = cropOrder.get().isEmpty() ? null : cropOrder.get().getFirst();
         emptyScans = 0;
@@ -308,6 +312,7 @@ public class AutoHarvest extends Module {
         stopPathing();
         targets.clear();
         targetCooldowns.clear();
+        newlyPlanted.clear();
         activeCrop = null;
         depositingInventory = false;
     }
@@ -322,6 +327,7 @@ public class AutoHarvest extends Module {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null) return;
 
         tickTargetCooldowns();
+        tickNewlyPlanted();
 
         if (mc.currentScreen != null) {
             stopPathing();
@@ -379,9 +385,22 @@ public class AutoHarvest extends Module {
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
-        if (targetCooldowns.containsKey(event.pos)) return;
+        BlockPos pos = event.pos.toImmutable();
+        PlantedCropLock lock = newlyPlanted.get(pos);
+        if (lock != null) {
+            if (isCropForChoice(event.newState, lock.crop)) {
+                if (!isMatureCrop(event.newState, lock.crop)) lock.sawYoungState = true;
+            } else if (event.newState.isAir()) {
+                AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+                if ((autoPlant == null || !autoPlant.isPlantPending(pos)) && lock.ticksRemaining <= 0) newlyPlanted.remove(pos);
+            } else {
+                newlyPlanted.remove(pos);
+            }
+        }
+
+        if (targetCooldowns.containsKey(pos)) return;
         if (isMatureCrop(event.oldState, activeCrop) && !isMatureCrop(event.newState, activeCrop)) {
-            targetCooldowns.put(event.pos.toImmutable(), targetCooldown.get());
+            targetCooldowns.put(pos, targetCooldown.get());
         }
     }
 
@@ -429,7 +448,10 @@ public class AutoHarvest extends Module {
         targets.clear();
         BlockPos playerPos = mc.player.getBlockPos();
         int radius = (int) Math.ceil(range.get());
-        double rangeSquared = range.get() * range.get();
+        // Keep local break requests inside a conservative interaction radius. A
+        // crop outside this radius must go through the movement path first.
+        double actionRange = Math.min(range.get(), 3.75);
+        double rangeSquared = actionRange * actionRange;
 
         for (int x = playerPos.getX() - radius; x <= playerPos.getX() + radius; x++) {
             for (int y = playerPos.getY() - radius; y <= playerPos.getY() + radius; y++) {
@@ -437,7 +459,7 @@ public class AutoHarvest extends Module {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (Vec3d.ofCenter(pos).squaredDistanceTo(mc.player.getX(), mc.player.getY(), mc.player.getZ()) > rangeSquared) continue;
                     BlockState state = mc.world.getBlockState(pos);
-                    if (!isTargetCoolingDown(pos) && !isPlantPending(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
+                    if (!isTargetCoolingDown(pos) && !isPlantSuppressed(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
                 }
             }
         }
@@ -456,10 +478,12 @@ public class AutoHarvest extends Module {
             if (isTargetCoolingDown(target) || !isHarvestTarget(target)) continue;
 
             targetCooldowns.put(target.toImmutable(), targetCooldown.get());
+            AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+            if (autoPlant != null && autoPlant.isActive()) autoPlant.rememberHarvestedCrop(target, activeCrop);
 
             Runnable action = () -> {
                 BlockState state = mc.world.getBlockState(target);
-                if (!isPlantPending(target) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
+                if (!isPlantSuppressed(target) && isWithinActionRange(target) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
             };
             if (rotate.get()) Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target), action);
             else action.run();
@@ -564,12 +588,75 @@ public class AutoHarvest extends Module {
 
     private boolean isHarvestTarget(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
-        return !isTargetCoolingDown(pos) && !isPlantPending(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
+        return !isTargetCoolingDown(pos) && !isPlantSuppressed(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
     }
 
-    private boolean isPlantPending(BlockPos pos) {
+    private boolean isPlantSuppressed(BlockPos pos) {
+        PlantedCropLock lock = newlyPlanted.get(pos);
+        if (lock != null) {
+            BlockState state = mc.world.getBlockState(pos);
+            if (state.isAir()) {
+                AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+                if (lock.ticksRemaining > 0 || (autoPlant != null && autoPlant.isPlantPending(pos))) return true;
+                newlyPlanted.remove(pos);
+            } else if (!isCropForChoice(state, lock.crop)) {
+                newlyPlanted.remove(pos);
+            } else if (!lock.sawYoungState || lock.ticksRemaining > 0 || !isMatureCrop(state, lock.crop)) {
+                return true;
+            } else {
+                // A young state was observed and the crop has now grown. It is
+                // safe for AutoHarvest to consider it on the next scan.
+                newlyPlanted.remove(pos);
+            }
+        }
+
         AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
-        return autoPlant != null && autoPlant.isActive() && autoPlant.isPlantPending(pos);
+        return autoPlant != null
+            && (autoPlant.isPlantPending(pos) || autoPlant.isPlantSuppressed(pos));
+    }
+
+    /** Returns true while this module owns the shared path manager or direct movement keys. */
+    public boolean isControllingMovement() {
+        return movementTarget != null || pathingByModule || directMoving;
+    }
+
+    /** Returns true while AutoPlant must not take control of the player. */
+    public boolean isBusyForAutoPlant() {
+        return isControllingMovement() || !targets.isEmpty() || depositingInventory;
+    }
+
+    /**
+     * Called by AutoPlant before it sends the placement interaction. Keeping a
+     * lock in AutoHarvest itself prevents a stale or out-of-order block update
+     * from making the freshly planted crop a harvest target.
+     */
+    public void rememberPlantedCrop(BlockPos pos, Item crop) {
+        if (isSupportedCropChoice(crop)) newlyPlanted.put(pos.toImmutable(), new PlantedCropLock(crop));
+    }
+
+    private void tickNewlyPlanted() {
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        Iterator<Map.Entry<BlockPos, PlantedCropLock>> iterator = newlyPlanted.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<BlockPos, PlantedCropLock> entry = iterator.next();
+            BlockPos pos = entry.getKey();
+            PlantedCropLock lock = entry.getValue();
+            BlockState state = mc.world.getBlockState(pos);
+
+            if (state.isAir()) {
+                if (lock.ticksRemaining <= 0 && (autoPlant == null || !autoPlant.isPlantPending(pos))) iterator.remove();
+                else if (lock.ticksRemaining > 0) lock.ticksRemaining--;
+                continue;
+            }
+
+            if (!isCropForChoice(state, lock.crop)) {
+                iterator.remove();
+                continue;
+            }
+
+            if (!isMatureCrop(state, lock.crop)) lock.sawYoungState = true;
+            if (lock.ticksRemaining > 0) lock.ticksRemaining--;
+        }
     }
 
     private boolean isTargetCoolingDown(BlockPos pos) {
@@ -782,6 +869,17 @@ public class AutoHarvest extends Module {
         return Items.AIR;
     }
 
+    private static boolean isCropForChoice(BlockState state, Item cropChoice) {
+        Block block = state.getBlock();
+        if (cropChoice == Items.PUMPKIN_SEEDS) {
+            return block == Blocks.PUMPKIN_STEM || block == Blocks.ATTACHED_PUMPKIN_STEM || block == Blocks.PUMPKIN;
+        }
+        if (cropChoice == Items.MELON_SEEDS) {
+            return block == Blocks.MELON_STEM || block == Blocks.ATTACHED_MELON_STEM || block == Blocks.MELON;
+        }
+        return getCropChoice(block) == cropChoice;
+    }
+
     private static boolean isSupportedCropChoice(Item item) {
         return item == Items.WHEAT_SEEDS
             || item == Items.CARROT
@@ -805,5 +903,15 @@ public class AutoHarvest extends Module {
     public enum FarmLayout {
         TargetSearch,
         Irrigated11x11
+    }
+
+    private static final class PlantedCropLock {
+        private final Item crop;
+        private int ticksRemaining = NEWLY_PLANTED_LOCK_TICKS;
+        private boolean sawYoungState;
+
+        private PlantedCropLock(Item crop) {
+            this.crop = crop;
+        }
     }
 }

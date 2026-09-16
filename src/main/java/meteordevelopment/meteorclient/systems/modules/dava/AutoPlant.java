@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
@@ -27,6 +28,7 @@ import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.CropBlock;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -36,6 +38,7 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.text.Normalizer;
@@ -50,6 +53,7 @@ import java.util.Map;
 public class AutoPlant extends Module {
     private static final int TICKS_PER_SECOND = 20;
     private static final int PENDING_TICKS = 40;
+    private static final int PLANT_PROTECTION_TICKS = 100;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgWarehouse = settings.createGroup("Warehouse");
@@ -79,8 +83,32 @@ public class AutoPlant extends Module {
 
     private final Setting<Boolean> autoMove = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-move")
-        .description("Uses the active path manager to walk to farmland that needs planting.")
+        .description("Walks to farmland that needs planting when it is outside interaction range.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<MovementEngine> movementEngine = sgGeneral.add(new EnumSetting.Builder<MovementEngine>()
+        .name("movement-engine")
+        .description("Auto prefers Baritone and falls back to direct walking when Baritone is unavailable.")
+        .defaultValue(MovementEngine.Auto)
+        .visible(autoMove::get)
+        .build()
+    );
+
+    private final Setting<Boolean> directSprint = sgGeneral.add(new BoolSetting.Builder()
+        .name("direct-sprint")
+        .description("Sprints while using the built-in direct movement fallback.")
+        .defaultValue(true)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
+        .build()
+    );
+
+    private final Setting<Boolean> directAutoJump = sgGeneral.add(new BoolSetting.Builder()
+        .name("direct-auto-jump")
+        .description("Jumps when direct movement meets a solid obstacle.")
+        .defaultValue(true)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
         .build()
     );
 
@@ -241,6 +269,8 @@ public class AutoPlant extends Module {
     private final List<PlantTarget> targets = new ArrayList<>();
     private final Map<BlockPos, Item> rememberedCrops = new HashMap<>();
     private final Map<BlockPos, Integer> pendingPositions = new HashMap<>();
+    private final Map<BlockPos, Integer> plantProtection = new HashMap<>();
+    private final Map<BlockPos, Boolean> plantedPositions = new HashMap<>();
 
     private Item activeItem;
     private boolean warehouseManaged;
@@ -257,6 +287,9 @@ public class AutoPlant extends Module {
     private int dropTimer;
     private int moveScanTimer;
     private BlockPos movementTarget;
+    private BlockPos directMovementPoint;
+    private BlockPos plantingReadyTarget;
+    private boolean directMoving;
 
     public AutoPlant() {
         super(Categories.Dava, "auto-plant", "Plants selected crops, restores harvested crop types, and manages planting items with /kho.");
@@ -267,6 +300,8 @@ public class AutoPlant extends Module {
         targets.clear();
         rememberedCrops.clear();
         pendingPositions.clear();
+        plantProtection.clear();
+        plantedPositions.clear();
         activeItem = null;
         warehouseManaged = false;
         waitingForWithdraw = false;
@@ -280,8 +315,11 @@ public class AutoPlant extends Module {
         withdrawWaitTimer = 0;
         finishTimer = 0;
         dropTimer = 0;
-        moveScanTimer = 0;
+        moveScanTimer = moveScanDelay.get();
         movementTarget = null;
+        directMovementPoint = null;
+        plantingReadyTarget = null;
+        directMoving = false;
     }
 
     @Override
@@ -291,23 +329,36 @@ public class AutoPlant extends Module {
         targets.clear();
         rememberedCrops.clear();
         pendingPositions.clear();
+        plantProtection.clear();
+        plantedPositions.clear();
         activeItem = null;
         warehouseManaged = false;
         waitingForWithdraw = false;
         returningExtras = false;
         movementTarget = null;
+        directMovementPoint = null;
+        plantingReadyTarget = null;
+        directMoving = false;
     }
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
+        BlockPos pos = event.pos.toImmutable();
         Item newCrop = getSeedForBlock(event.newState.getBlock());
         if (newCrop != null) {
-            rememberedCrops.put(event.pos.toImmutable(), newCrop);
+            rememberedCrops.put(pos, newCrop);
+            if (plantedPositions.containsKey(pos) && !isMatureCrop(event.newState)) plantedPositions.put(pos, true);
             return;
         }
 
         Item oldCrop = getSeedForBlock(event.oldState.getBlock());
-        if (oldCrop != null) rememberedCrops.put(event.pos.toImmutable(), oldCrop);
+        if (oldCrop != null) {
+            rememberedCrops.put(pos, oldCrop);
+            if (event.newState.isAir()) {
+                plantProtection.remove(pos);
+                plantedPositions.remove(pos);
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST + 1)
@@ -316,28 +367,47 @@ public class AutoPlant extends Module {
 
         tickTimers();
         updatePendingPositions();
+        updatePlantProtection();
+        updatePlantedPositions();
         pruneRememberedCrops();
+
+        if (plantingReadyTarget != null && !isPlantTarget(plantingReadyTarget)) plantingReadyTarget = null;
 
         if (mc.currentScreen != null) {
             stopPathing();
             targets.clear();
+            plantingReadyTarget = null;
             return;
         }
 
         if (crops.get().isEmpty()) {
             stopPathing();
             targets.clear();
+            plantingReadyTarget = null;
             if (activeItem != null) finishActiveItem(true);
             return;
         }
 
+        // Baritone is a single shared path manager. Let AutoHarvest finish its
+        // current route before AutoPlant asks Baritone for a different goal;
+        // otherwise the two modules replace each other's goals every tick.
+        AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
+        if (autoHarvest != null && autoHarvest.isActive() && autoHarvest.isBusyForAutoPlant()) {
+            if (pathingByModule) stopPathing();
+            targets.clear();
+            plantingReadyTarget = null;
+            return;
+        }
+
         if (returningExtras) {
-            stopPathing();
             collectTargets(activeItem);
             if (!targets.isEmpty()) {
                 returningExtras = false;
                 finishTimer = 0;
+                stopPathing();
             } else {
+                if (handleMovement()) return;
+                stopPathing();
                 returnOneStack();
                 return;
             }
@@ -355,18 +425,29 @@ public class AutoPlant extends Module {
             return;
         }
 
-        stopPathing();
-
         if (!crops.get().contains(activeItem)) {
+            stopPathing();
             finishActiveItem(true);
             return;
         }
 
         if (targets.isEmpty()) {
+            if (handleMovement()) {
+                // Keep the finish timer while a search is merely waiting for its
+                // next scan. A real movement target resets it below, so an empty
+                // farm can still advance to the next crop.
+                if (movementTarget != null) finishTimer = 0;
+                return;
+            }
+
             if (++finishTimer >= finishDelay.get()) finishActiveItem(true);
             return;
         }
 
+        // Every target collected here is inside the safe interaction radius. Any
+        // farther farmland is handled by handleMovement() before it reaches this
+        // planting section.
+        stopPathing();
         finishTimer = 0;
 
         FindItemResult available = findUsablePlantingItem(activeItem);
@@ -388,7 +469,7 @@ public class AutoPlant extends Module {
         int planted = 0;
         for (PlantTarget target : targets) {
             if (planted >= plantsPerTick.get()) break;
-            if (pendingPositions.containsKey(target.pos())) continue;
+            if (isPlantPending(target.pos())) continue;
 
             plant(target, seedSlot);
             planted++;
@@ -404,52 +485,138 @@ public class AutoPlant extends Module {
     }
 
     public boolean isWorking() {
-        return activeItem != null || returningExtras || waitingForWithdraw || movementTarget != null || !targets.isEmpty() || !pendingPositions.isEmpty();
+        // Auto Harvest only needs to yield while planting owns the player or is
+        // actively placing a batch. A selected crop and its server-update grace
+        // period can continue in parallel; per-position suppression protects the
+        // newly planted block from being harvested too early.
+        return returningExtras || waitingForWithdraw || movementTarget != null || plantingReadyTarget != null || !targets.isEmpty();
     }
 
     public boolean isPlantPending(BlockPos pos) {
-        return pendingPositions.containsKey(pos);
+        return pendingPositions.containsKey(pos) || plantProtection.containsKey(pos);
     }
 
-    private void handleMovement() {
+    public void rememberHarvestedCrop(BlockPos pos, Item crop) {
+        if (isSupportedSeed(crop)) rememberedCrops.put(pos.toImmutable(), crop);
+    }
+
+    public boolean isPlantSuppressed(BlockPos pos) {
+        if (plantProtection.containsKey(pos)) return true;
+
+        Boolean sawYoungCrop = plantedPositions.get(pos);
+        if (sawYoungCrop == null) return false;
+
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.isAir()) {
+            plantedPositions.remove(pos);
+            return false;
+        }
+
+        // Do not harvest a crop that was planted while it still has no confirmed
+        // young state. This prevents servers with delayed or instant-looking
+        // placement updates from entering a harvest/plant loop.
+        if (!sawYoungCrop) return true;
+        return !isMatureCrop(state);
+    }
+
+    private boolean handleMovement() {
         if (!autoMove.get()) {
             stopPathing();
-            return;
+            return false;
         }
 
-        if (movementTarget != null && isWithinActionRange(movementTarget)) {
-            stopPathing();
-            return;
+        if (movementTarget != null) {
+            if (!isPlantTarget(movementTarget)) {
+                plantingReadyTarget = null;
+                stopPathing();
+            } else if (isWithinActionRange(movementTarget)) {
+                plantingReadyTarget = movementTarget.toImmutable();
+                stopPathing();
+                return true;
+            } else if (directMoving) {
+                if (usesDirectMovement()) updateDirectMovement();
+                else stopDirectMovement();
+                if (directMoving) return true;
+            } else if (pathingByModule && PathManagers.get().isPathing()) {
+                return true;
+            }
         }
 
-        if (moveScanTimer++ < moveScanDelay.get()) return;
+        if (moveScanTimer++ < moveScanDelay.get()) return true;
         moveScanTimer = 0;
 
         BlockPos target = findNearestFarmingTarget();
-        if (target == null || isWithinActionRange(target)) {
+        if (target == null) {
+            plantingReadyTarget = null;
             stopPathing();
-            return;
+            return false;
         }
 
-        if (PathManagers.get() instanceof NopPathManager) {
+        if (isWithinActionRange(target)) {
+            plantingReadyTarget = target.toImmutable();
+            stopPathing();
+            return true;
+        }
+
+        if (movementEngine.get() == MovementEngine.Baritone && PathManagers.get() instanceof NopPathManager) {
             if (!warnedNoPathManager) {
-                warning("Auto Move requires Baritone or another path manager. Local planting will continue.");
+                warning("Baritone movement was selected, but Baritone is unavailable. Select Auto or Direct for built-in walking.");
                 warnedNoPathManager = true;
             }
+            return false;
+        }
+
+        moveToTarget(target);
+        return true;
+    }
+
+    private void moveToTarget(BlockPos workTarget) {
+        BlockPos movementPoint = getMovementPoint(workTarget);
+        stopPathing();
+        plantingReadyTarget = null;
+        movementTarget = workTarget.toImmutable();
+
+        if (usesDirectMovement()) {
+            directMovementPoint = movementPoint;
+            directMoving = true;
+            updateDirectMovement();
             return;
         }
 
-        BlockPos movementPoint = getMovementPoint(target);
         BlockState movementState = mc.world.getBlockState(movementPoint);
         BlockPos pathTarget = movementState.isAir() ? movementPoint.down() : movementPoint;
-        boolean targetChanged = movementTarget == null || movementTarget.getSquaredDistance(target) > 4;
+        PathManagers.get().moveTo(pathTarget);
+        pathingByModule = true;
+    }
 
-        if (targetChanged || !PathManagers.get().isPathing()) {
-            if (pathingByModule) PathManagers.get().stop();
-            PathManagers.get().moveTo(pathTarget);
-            pathingByModule = true;
-            movementTarget = target;
-        }
+    private boolean usesDirectMovement() {
+        return movementEngine.get() == MovementEngine.Direct
+            || movementEngine.get() == MovementEngine.Auto && PathManagers.get() instanceof NopPathManager;
+    }
+
+    private void updateDirectMovement() {
+        if (!directMoving || directMovementPoint == null) return;
+
+        double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+        double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+        float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
+
+        mc.player.setYaw(yaw);
+        mc.player.setHeadYaw(yaw);
+        mc.options.forwardKey.setPressed(true);
+        mc.options.sprintKey.setPressed(directSprint.get());
+        mc.options.jumpKey.setPressed(directAutoJump.get() && mc.player.horizontalCollision && mc.player.isOnGround());
+    }
+
+    private void stopDirectMovement() {
+        if (!directMoving) return;
+
+        mc.options.forwardKey.setPressed(false);
+        mc.options.sprintKey.setPressed(false);
+        mc.options.jumpKey.setPressed(false);
+        directMoving = false;
+        directMovementPoint = null;
     }
 
     private BlockPos getMovementPoint(BlockPos workTarget) {
@@ -520,10 +687,7 @@ public class AutoPlant extends Module {
                     Item existingCrop = getSeedForBlock(state.getBlock());
                     if (existingCrop != null) rememberedCrops.put(pos, existingCrop);
 
-                    boolean plantTarget = state.isAir()
-                        && mc.world.getBlockState(pos.down()).getBlock() == Blocks.FARMLAND
-                        && getItemForEmptyFarmland(pos) != null;
-                    if (!plantTarget) continue;
+                    if (!isPlantTarget(pos)) continue;
 
                     double distance = pos.getSquaredDistance(playerPos);
                     if (distance < bestDistance) {
@@ -543,8 +707,18 @@ public class AutoPlant extends Module {
             <= actionRange * actionRange;
     }
 
+    private boolean isPlantTarget(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        if (!state.isAir() || mc.world.getBlockState(pos.down()).getBlock() != Blocks.FARMLAND) return false;
+        if (pendingPositions.containsKey(pos) || plantProtection.containsKey(pos)) return false;
+
+        Item item = getItemForEmptyFarmland(pos);
+        return item != null && (activeItem == null || item == activeItem);
+    }
+
     private void stopPathing() {
         if (pathingByModule) PathManagers.get().stop();
+        stopDirectMovement();
         pathingByModule = false;
         movementTarget = null;
         moveScanTimer = 0;
@@ -555,7 +729,8 @@ public class AutoPlant extends Module {
 
         BlockPos playerPos = mc.player.getBlockPos();
         int radius = (int) Math.ceil(range.get());
-        double rangeSquared = range.get() * range.get();
+        double actionRange = Math.min(range.get(), 3.75);
+        double rangeSquared = actionRange * actionRange;
 
         for (int x = playerPos.getX() - radius; x <= playerPos.getX() + radius; x++) {
             for (int y = playerPos.getY() - radius; y <= playerPos.getY() + radius; y++) {
@@ -571,7 +746,7 @@ public class AutoPlant extends Module {
                     }
 
                     if (!state.isAir() || mc.world.getBlockState(pos.down()).getBlock() != Blocks.FARMLAND) continue;
-                    if (pendingPositions.containsKey(pos)) continue;
+                    if (isPlantPending(pos)) continue;
 
                     Item item = getItemForEmptyFarmland(pos);
                     if (item == null || (filterItem != null && item != filterItem)) continue;
@@ -596,16 +771,29 @@ public class AutoPlant extends Module {
         BlockPos soilPos = target.pos().down();
         Vec3d hitPos = Vec3d.ofCenter(soilPos).add(0, 0.5, 0);
         BlockHitResult hitResult = new BlockHitResult(hitPos, Direction.UP, soilPos, false);
+        BlockPos targetPos = target.pos().toImmutable();
 
-        pendingPositions.put(target.pos(), PENDING_TICKS);
-        rememberedCrops.put(target.pos(), target.item());
+        pendingPositions.put(targetPos, PENDING_TICKS);
+        plantProtection.put(targetPos, PLANT_PROTECTION_TICKS);
+        rememberedCrops.put(targetPos, target.item());
+        plantedPositions.put(targetPos, false);
+
+        AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
+        if (autoHarvest != null && autoHarvest.isActive()) autoHarvest.rememberPlantedCrop(targetPos, target.item());
 
         Runnable action = () -> {
-            if (mc.world == null || !mc.world.getBlockState(target.pos()).isAir()) return;
+            if (mc.world == null || !isWithinActionRange(targetPos) || !mc.world.getBlockState(targetPos).isAir()) {
+                if (targetPos.equals(plantingReadyTarget)) plantingReadyTarget = null;
+                return;
+            }
             Hand hand = seedSlot == SlotUtils.OFFHAND ? Hand.OFF_HAND : Hand.MAIN_HAND;
-            if (hand == Hand.MAIN_HAND && !InvUtils.swap(seedSlot, true)) return;
+            if (hand == Hand.MAIN_HAND && !InvUtils.swap(seedSlot, true)) {
+                if (targetPos.equals(plantingReadyTarget)) plantingReadyTarget = null;
+                return;
+            }
 
             BlockUtils.interact(hitResult, hand, swing.get());
+            if (targetPos.equals(plantingReadyTarget)) plantingReadyTarget = null;
             if (hand == Hand.MAIN_HAND) InvUtils.swapBack();
         };
 
@@ -707,6 +895,7 @@ public class AutoPlant extends Module {
         returningExtras = false;
         movedFromSlot = -1;
         movedHotbarSlot = -1;
+        plantingReadyTarget = null;
         placeTimer = 0;
         withdrawWaitTimer = 0;
         finishTimer = 0;
@@ -725,6 +914,30 @@ public class AutoPlant extends Module {
             Map.Entry<BlockPos, Integer> entry = iterator.next();
             if (entry.getValue() <= 1) iterator.remove();
             else entry.setValue(entry.getValue() - 1);
+        }
+    }
+
+    private void updatePlantProtection() {
+        Iterator<Map.Entry<BlockPos, Integer>> iterator = plantProtection.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<BlockPos, Integer> entry = iterator.next();
+            if (entry.getValue() <= 1) iterator.remove();
+            else entry.setValue(entry.getValue() - 1);
+        }
+    }
+
+    private void updatePlantedPositions() {
+        Iterator<Map.Entry<BlockPos, Boolean>> iterator = plantedPositions.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<BlockPos, Boolean> entry = iterator.next();
+            BlockPos pos = entry.getKey();
+            BlockState state = mc.world.getBlockState(pos);
+
+            if (state.isAir()) {
+                if (!pendingPositions.containsKey(pos)) iterator.remove();
+            } else if (getSeedForBlock(state.getBlock()) != null && !isMatureCrop(state)) {
+                entry.setValue(true);
+            }
         }
     }
 
@@ -775,10 +988,20 @@ public class AutoPlant extends Module {
         return null;
     }
 
+    private static boolean isMatureCrop(BlockState state) {
+        return state.getBlock() instanceof CropBlock crop && crop.isMature(state);
+    }
+
     public enum Mode {
         EmptySoil,
         Replant,
         Both
+    }
+
+    public enum MovementEngine {
+        Auto,
+        Baritone,
+        Direct
     }
 
     public enum FarmLayout {
