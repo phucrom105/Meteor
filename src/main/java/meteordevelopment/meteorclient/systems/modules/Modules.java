@@ -567,6 +567,7 @@ public class Modules extends System<Modules> {
 
     private void initDava() {
         add(new AutoFix());
+        add(new AutoHarvest());
         add(new AutoMine());
         add(new AutoPlant());
         add(new AutoSell());

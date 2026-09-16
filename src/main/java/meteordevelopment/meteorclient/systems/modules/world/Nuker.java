@@ -31,8 +31,6 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.CropBlock;
-import net.minecraft.item.Item;
-import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.util.Hand;
@@ -294,10 +292,6 @@ public class Nuker extends Module {
 
     private final List<BlockPos> blocks = new ArrayList<>();
     private final Set<BlockPos> interacted = new ObjectOpenHashSet<>();
-    private final Set<Item> autoPlantCrops = new ObjectOpenHashSet<>();
-
-    private boolean autoPlantControl;
-    private double autoPlantRange;
 
     private boolean firstBlock;
     private final BlockPos.Mutable lastBlockPos = new BlockPos.Mutable();
@@ -324,7 +318,7 @@ public class Nuker extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (enableRenderBounding.get() && !autoPlantControl) {
+        if (enableRenderBounding.get()) {
             // Render bounding box if cube and should break stuff
             if (shape.get() != Shape.Sphere && mode.get() != Mode.Smash) {
                 int minX = Math.min(pos1.getX(), pos2.getX());
@@ -358,15 +352,14 @@ public class Nuker extends Module {
 
         // Calculate some stuff
         double pX = mc.player.getX(), pY = mc.player.getY(), pZ = mc.player.getZ();
-        double effectiveRange = autoPlantControl ? autoPlantRange : range.get();
-        double rangeSq = Math.pow(effectiveRange, 2);
+        double rangeSq = Math.pow(range.get(), 2);
         BlockPos playerBlockPos = mc.player.getBlockPos();
 
-        if (!autoPlantControl && shape.get() == Shape.UniformCube) range.set((double) Math.round(range.get()));
+        if (shape.get() == Shape.UniformCube) range.set((double) Math.round(range.get()));
 
         double pX_ = pX;
         double pZ_ = pZ;
-        int r = (int) Math.round(effectiveRange);
+        int r = (int) Math.round(range.get());
 
         if (shape.get() == Shape.UniformCube) {
             pX_ += 1; // weird position stuff
@@ -413,16 +406,14 @@ public class Nuker extends Module {
         Box box = new Box(pos1.toCenterPos(), pos2.toCenterPos());
 
         // Find blocks to break
-        BlockIterator.register(Math.max((int) Math.ceil(effectiveRange + 1), maxh), Math.max((int) Math.ceil(effectiveRange), maxv), (blockPos, blockState) -> {
+        BlockIterator.register(Math.max((int) Math.ceil(range.get() + 1), maxh), Math.max((int) Math.ceil(range.get()), maxv), (blockPos, blockState) -> {
             Vec3d center = blockPos.toCenterPos();
-            if (autoPlantControl) {
-                if (Utils.squaredDistance(pX, pY, pZ, center.getX(), center.getY(), center.getZ()) > rangeSq) return;
-            } else switch (shape.get()) {
+            switch (shape.get()) {
                 case Sphere -> {
                     if (Utils.squaredDistance(pX, pY, pZ, center.getX(), center.getY(), center.getZ()) > rangeSq) return;
                 }
                 case UniformCube -> {
-                    if (chebyshevDist(playerBlockPos.getX(), playerBlockPos.getY(), playerBlockPos.getZ(), blockPos.getX(), blockPos.getY(), blockPos.getZ()) >= effectiveRange) return;
+                    if (chebyshevDist(playerBlockPos.getX(), playerBlockPos.getY(), playerBlockPos.getZ(), blockPos.getX(), blockPos.getY(), blockPos.getZ()) >= range.get()) return;
                 }
                 case Cube -> {
                     if (!box.contains(center)) return;
@@ -430,16 +421,16 @@ public class Nuker extends Module {
             }
 
             // Flatten
-            if (!autoPlantControl && mode.get() == Mode.Flatten && blockPos.getY() + 0.5 < pY) return;
+            if (mode.get() == Mode.Flatten && blockPos.getY() + 0.5 < pY) return;
 
             // Smash
-            if (!autoPlantControl && mode.get() == Mode.Smash && blockState.getHardness(mc.world, blockPos) != 0) return;
+            if (mode.get() == Mode.Smash && blockState.getHardness(mc.world, blockPos) != 0) return;
 
             // Use only optimal tools
-            if (!autoPlantControl && suitableTools.get() && !interact.get() && !mc.player.getMainHandStack().isSuitableFor(blockState)) return;
+            if (suitableTools.get() && !interact.get() && !mc.player.getMainHandStack().isSuitableFor(blockState)) return;
 
             // Block must be breakable
-            if (!BlockUtils.canBreak(blockPos, blockState) && (!interact.get() || autoPlantControl)) return;
+            if (!BlockUtils.canBreak(blockPos, blockState) && !interact.get()) return;
 
             // Raycast to block
             if (isOutOfRange(blockPos)) return;
@@ -508,7 +499,7 @@ public class Nuker extends Module {
     }
 
     private void breakBlock(BlockPos blockPos) {
-        if (interact.get() && !autoPlantControl) {
+        if (interact.get()) {
             // Interact mode
             BlockUtils.interact(new BlockHitResult(blockPos.toCenterPos(), BlockUtils.getDirection(blockPos), blockPos, true), Hand.MAIN_HAND, swing.get());
             interacted.add(blockPos);
@@ -531,24 +522,13 @@ public class Nuker extends Module {
         RaycastContext raycastContext = new RaycastContext(mc.player.getEyePos(), pos, RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, mc.player);
         BlockHitResult result = mc.world.raycast(raycastContext);
         if (result == null || !result.getBlockPos().equals(blockPos))
-            return !PlayerUtils.isWithin(pos, autoPlantControl ? autoPlantRange : wallsRange.get());
+            return !PlayerUtils.isWithin(pos, wallsRange.get());
 
         return false;
     }
 
     private boolean shouldMine(BlockState state) {
         Block block = state.getBlock();
-
-        if (autoPlantControl) {
-            if (block instanceof CropBlock crop) {
-                return autoPlantCrops.contains(getSeedForCrop(block)) && crop.isMature(state);
-            }
-
-            if (block == Blocks.PUMPKIN) return autoPlantCrops.contains(Items.PUMPKIN_SEEDS);
-            if (block == Blocks.MELON) return autoPlantCrops.contains(Items.MELON_SEEDS);
-            return false;
-        }
-
         List<Block> selectedBlocks = listMode.get() == ListMode.Whitelist ? whitelist.get() : blacklist.get();
 
         if (listMode.get() == ListMode.Whitelist) {
@@ -571,27 +551,6 @@ public class Nuker extends Module {
         if (isMelonStem(block) && containsMelonStem(selectedBlocks)) return false;
 
         return !selectedBlocks.contains(block);
-    }
-
-    public void setAutoPlantCrops(List<Item> crops, double range) {
-        autoPlantControl = true;
-        autoPlantRange = range;
-        autoPlantCrops.clear();
-        autoPlantCrops.addAll(crops);
-    }
-
-    public void clearAutoPlantControl() {
-        autoPlantControl = false;
-        autoPlantRange = 0;
-        autoPlantCrops.clear();
-    }
-
-    private static Item getSeedForCrop(Block block) {
-        if (block == Blocks.WHEAT) return Items.WHEAT_SEEDS;
-        if (block == Blocks.CARROTS) return Items.CARROT;
-        if (block == Blocks.POTATOES) return Items.POTATO;
-        if (block == Blocks.BEETROOTS) return Items.BEETROOT_SEEDS;
-        return Items.AIR;
     }
 
     private static boolean isSelectableBlock(Block block) {

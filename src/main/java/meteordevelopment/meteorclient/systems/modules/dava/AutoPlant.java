@@ -14,8 +14,6 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.systems.modules.world.Nuker;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
@@ -29,7 +27,6 @@ import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.block.CropBlock;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -41,6 +38,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -79,16 +77,9 @@ public class AutoPlant extends Module {
         .build()
     );
 
-    private final Setting<Boolean> autoHarvest = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-harvest")
-        .description("Controls Nuker so it only harvests mature selected crops and pumpkin or melon fruit.")
-        .defaultValue(true)
-        .build()
-    );
-
     private final Setting<Boolean> autoMove = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-move")
-        .description("Uses the active path manager to walk to mature crops or farmland that needs planting.")
+        .description("Uses the active path manager to walk to farmland that needs planting.")
         .defaultValue(true)
         .build()
     );
@@ -196,23 +187,6 @@ public class AutoPlant extends Module {
         .build()
     );
 
-    private final Setting<Boolean> autoDeposit = sgWarehouse.add(new BoolSetting.Builder()
-        .name("auto-deposit")
-        .description("Drops harvested crops onto the ground when the inventory is full so the server can store them.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Integer> emptySlotsAfterDeposit = sgWarehouse.add(new IntSetting.Builder()
-        .name("empty-slots-after-deposit")
-        .description("How many inventory slots to free before farming resumes.")
-        .defaultValue(3)
-        .range(1, 9)
-        .sliderRange(1, 9)
-        .visible(autoDeposit::get)
-        .build()
-    );
-
     private final Setting<Integer> finishDelay = sgWarehouse.add(new IntSetting.Builder()
         .name("finish-delay")
         .description("Ticks without a planting target before leftover withdrawn crops are dropped.")
@@ -229,7 +203,7 @@ public class AutoPlant extends Module {
         .defaultValue(1)
         .min(0)
         .sliderMax(20)
-        .visible(() -> autoDeposit.get() || (autoWithdraw.get() && returnExtras.get()))
+        .visible(() -> autoWithdraw.get() && returnExtras.get())
         .build()
     );
 
@@ -272,11 +246,8 @@ public class AutoPlant extends Module {
     private boolean warehouseManaged;
     private boolean waitingForWithdraw;
     private boolean returningExtras;
-    private boolean depositingInventory;
-    private boolean nukerEnabledByModule;
     private boolean pathingByModule;
     private boolean warnedNoPathManager;
-    private boolean warnedNoDepositItems;
     private int movedFromSlot;
     private int movedHotbarSlot;
     private int placeTimer;
@@ -288,7 +259,7 @@ public class AutoPlant extends Module {
     private BlockPos movementTarget;
 
     public AutoPlant() {
-        super(Categories.Dava, "auto-plant", "Harvests mature crops with Nuker, moves between fields, replants the same crop, and manages /kho items.");
+        super(Categories.Dava, "auto-plant", "Plants selected crops, restores harvested crop types, and manages planting items with /kho.");
     }
 
     @Override
@@ -300,11 +271,8 @@ public class AutoPlant extends Module {
         warehouseManaged = false;
         waitingForWithdraw = false;
         returningExtras = false;
-        depositingInventory = false;
-        nukerEnabledByModule = false;
         pathingByModule = false;
         warnedNoPathManager = false;
-        warnedNoDepositItems = false;
         movedFromSlot = -1;
         movedHotbarSlot = -1;
         placeTimer = 0;
@@ -314,15 +282,12 @@ public class AutoPlant extends Module {
         dropTimer = 0;
         moveScanTimer = 0;
         movementTarget = null;
-
-        updateNuker(true);
     }
 
     @Override
     public void onDeactivate() {
         restoreHotbarSlot();
         stopPathing();
-        releaseNuker();
         targets.clear();
         rememberedCrops.clear();
         pendingPositions.clear();
@@ -330,7 +295,6 @@ public class AutoPlant extends Module {
         warehouseManaged = false;
         waitingForWithdraw = false;
         returningExtras = false;
-        depositingInventory = false;
         movementTarget = null;
     }
 
@@ -347,7 +311,7 @@ public class AutoPlant extends Module {
         if (oldCrop != null) rememberedCrops.put(event.pos.toImmutable(), oldCrop);
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
+    @EventHandler(priority = EventPriority.HIGHEST + 1)
     private void onTick(TickEvent.Pre event) {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null) return;
 
@@ -356,36 +320,19 @@ public class AutoPlant extends Module {
         pruneRememberedCrops();
 
         if (mc.currentScreen != null) {
-            updateNuker(false);
             stopPathing();
             targets.clear();
             return;
         }
 
         if (crops.get().isEmpty()) {
-            updateNuker(false);
             stopPathing();
             targets.clear();
             if (activeItem != null) finishActiveItem(true);
             return;
         }
 
-        if (depositingInventory || (autoDeposit.get() && isInventoryFull())) {
-            if (!depositingInventory) {
-                depositingInventory = true;
-                warnedNoDepositItems = false;
-                restoreHotbarSlot();
-            }
-
-            updateNuker(false);
-            stopPathing();
-            targets.clear();
-            depositInventory();
-            return;
-        }
-
         if (returningExtras) {
-            updateNuker(false);
             stopPathing();
             collectTargets(activeItem);
             if (!targets.isEmpty()) {
@@ -396,8 +343,6 @@ public class AutoPlant extends Module {
                 return;
             }
         }
-
-        updateNuker(true);
 
         collectTargets(activeItem);
 
@@ -425,7 +370,7 @@ public class AutoPlant extends Module {
 
         finishTimer = 0;
 
-        FindItemResult available = InvUtils.find(activeItem);
+        FindItemResult available = findUsablePlantingItem(activeItem);
         if (!available.found()) {
             restoreHotbarSlot();
             tryWithdraw();
@@ -459,31 +404,8 @@ public class AutoPlant extends Module {
         }
     }
 
-    private void updateNuker(boolean harvestingAllowed) {
-        Nuker nuker = Modules.get().get(Nuker.class);
-        if (nuker == null) return;
-
-        if (!autoHarvest.get()) {
-            nuker.clearAutoPlantControl();
-            if (nukerEnabledByModule) nuker.disable();
-            nukerEnabledByModule = false;
-            return;
-        }
-
-        nuker.setAutoPlantCrops(harvestingAllowed ? crops.get() : List.of(), range.get());
-        if (!nuker.isActive()) {
-            nuker.enable();
-            nukerEnabledByModule = true;
-        }
-    }
-
-    private void releaseNuker() {
-        Nuker nuker = Modules.get().get(Nuker.class);
-        if (nuker == null) return;
-
-        nuker.clearAutoPlantControl();
-        if (nukerEnabledByModule) nuker.disable();
-        nukerEnabledByModule = false;
+    public boolean isWorking() {
+        return activeItem != null || returningExtras || waitingForWithdraw || movementTarget != null || !targets.isEmpty();
     }
 
     private void handleMovement() {
@@ -508,7 +430,7 @@ public class AutoPlant extends Module {
 
         if (PathManagers.get() instanceof NopPathManager) {
             if (!warnedNoPathManager) {
-                warning("Auto Move requires Baritone or another path manager. Local harvesting and planting will continue.");
+                warning("Auto Move requires Baritone or another path manager. Local planting will continue.");
                 warnedNoPathManager = true;
             }
             return;
@@ -595,11 +517,10 @@ public class AutoPlant extends Module {
                     Item existingCrop = getSeedForBlock(state.getBlock());
                     if (existingCrop != null) rememberedCrops.put(pos, existingCrop);
 
-                    boolean harvestTarget = isMatureSelectedCrop(state);
                     boolean plantTarget = state.isAir()
                         && mc.world.getBlockState(pos.down()).getBlock() == Blocks.FARMLAND
                         && getItemForEmptyFarmland(pos) != null;
-                    if (!harvestTarget && !plantTarget) continue;
+                    if (!plantTarget) continue;
 
                     double distance = pos.getSquaredDistance(playerPos);
                     if (distance < bestDistance) {
@@ -613,18 +534,6 @@ public class AutoPlant extends Module {
         return bestTarget;
     }
 
-    private boolean isMatureSelectedCrop(BlockState state) {
-        Block block = state.getBlock();
-        if (block instanceof CropBlock crop) {
-            Item seed = getSeedForBlock(block);
-            return seed != null && crops.get().contains(seed) && crop.isMature(state);
-        }
-
-        if (block == Blocks.PUMPKIN) return crops.get().contains(Items.PUMPKIN_SEEDS);
-        if (block == Blocks.MELON) return crops.get().contains(Items.MELON_SEEDS);
-        return false;
-    }
-
     private boolean isWithinActionRange(BlockPos pos) {
         double actionRange = Math.min(range.get(), 3.75);
         return Vec3d.ofCenter(pos).squaredDistanceTo(mc.player.getX(), mc.player.getY(), mc.player.getZ())
@@ -636,68 +545,6 @@ public class AutoPlant extends Module {
         pathingByModule = false;
         movementTarget = null;
         moveScanTimer = 0;
-    }
-
-    private boolean isInventoryFull() {
-        for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
-            ItemStack stack = mc.player.getInventory().getStack(slot);
-            if (stack.isEmpty()) return false;
-        }
-
-        return true;
-    }
-
-    private int getEmptySlotCount() {
-        int count = 0;
-        for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
-            if (mc.player.getInventory().getStack(slot).isEmpty()) count++;
-        }
-        return count;
-    }
-
-    private void depositInventory() {
-        if (getEmptySlotCount() >= emptySlotsAfterDeposit.get()) {
-            depositingInventory = false;
-            warnedNoDepositItems = false;
-            dropTimer = 0;
-            return;
-        }
-
-        if (dropTimer++ < dropDelay.get()) return;
-        dropTimer = 0;
-
-        int slot = findDepositSlot(false);
-        if (slot == -1) slot = findDepositSlot(true);
-
-        if (slot == -1) {
-            if (!warnedNoDepositItems) {
-                warning("Inventory is full, but no selected crop items can be deposited.");
-                warnedNoDepositItems = true;
-            }
-            return;
-        }
-
-        InvUtils.drop().slot(slot);
-    }
-
-    private int findDepositSlot(boolean includeSeeds) {
-        for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
-            Item item = mc.player.getInventory().getStack(slot).getItem();
-            if (!isDepositItem(item)) continue;
-            if (!includeSeeds && isSupportedSeed(item)) continue;
-            return slot;
-        }
-
-        return -1;
-    }
-
-    private boolean isDepositItem(Item item) {
-        if (crops.get().contains(Items.WHEAT_SEEDS) && (item == Items.WHEAT || item == Items.WHEAT_SEEDS)) return true;
-        if (crops.get().contains(Items.CARROT) && item == Items.CARROT) return true;
-        if (crops.get().contains(Items.POTATO) && (item == Items.POTATO || item == Items.POISONOUS_POTATO)) return true;
-        if (crops.get().contains(Items.BEETROOT_SEEDS) && (item == Items.BEETROOT || item == Items.BEETROOT_SEEDS)) return true;
-        if (crops.get().contains(Items.PUMPKIN_SEEDS) && (item == Items.PUMPKIN || item == Items.PUMPKIN_SEEDS)) return true;
-        return crops.get().contains(Items.MELON_SEEDS) && (item == Items.MELON_SLICE || item == Items.MELON_SEEDS);
     }
 
     private void collectTargets(Item filterItem) {
@@ -764,10 +611,10 @@ public class AutoPlant extends Module {
     }
 
     private int ensureSeedInHotbar() {
-        FindItemResult hotbarItem = InvUtils.findInHotbar(activeItem);
+        FindItemResult hotbarItem = InvUtils.findInHotbar(stack -> isUsablePlantingStack(stack, activeItem));
         if (hotbarItem.found()) return hotbarItem.slot();
 
-        FindItemResult inventoryItem = InvUtils.find(activeItem);
+        FindItemResult inventoryItem = findUsablePlantingItem(activeItem);
         if (!inventoryItem.found()) return -1;
 
         int targetSlot = hotbarSlot.get() - 1;
@@ -777,7 +624,7 @@ public class AutoPlant extends Module {
         }
         InvUtils.move().from(inventoryItem.slot()).toHotbar(targetSlot);
 
-        return mc.player.getInventory().getStack(targetSlot).isOf(activeItem) ? targetSlot : -1;
+        return isUsablePlantingStack(mc.player.getInventory().getStack(targetSlot), activeItem) ? targetSlot : -1;
     }
 
     private void restoreHotbarSlot() {
@@ -813,7 +660,7 @@ public class AutoPlant extends Module {
         waitingForWithdraw = false;
         withdrawWaitTimer = 0;
 
-        if (returnWarehouseItems && warehouseManaged && returnExtras.get() && InvUtils.find(activeItem).found()) {
+        if (returnWarehouseItems && warehouseManaged && returnExtras.get() && findUsablePlantingItem(activeItem).found()) {
             returningExtras = true;
             dropTimer = 0;
             return;
@@ -834,13 +681,13 @@ public class AutoPlant extends Module {
 
         for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
             ItemStack stack = mc.player.getInventory().getStack(slot);
-            if (!stack.isOf(activeItem)) continue;
+            if (!isUsablePlantingStack(stack, activeItem)) continue;
 
             InvUtils.drop().slot(slot);
             return;
         }
 
-        if (mc.player.getOffHandStack().isOf(activeItem)) {
+        if (isUsablePlantingStack(mc.player.getOffHandStack(), activeItem)) {
             InvUtils.drop().slotOffhand();
             return;
         }
@@ -898,6 +745,21 @@ public class AutoPlant extends Module {
             || item == Items.BEETROOT_SEEDS
             || item == Items.PUMPKIN_SEEDS
             || item == Items.MELON_SEEDS;
+    }
+
+    private FindItemResult findUsablePlantingItem(Item item) {
+        return InvUtils.find(stack -> isUsablePlantingStack(stack, item));
+    }
+
+    private static boolean isUsablePlantingStack(ItemStack stack, Item item) {
+        return stack.isOf(item) && !isSummerSeed(stack);
+    }
+
+    private static boolean isSummerSeed(ItemStack stack) {
+        String name = Normalizer.normalize(stack.getName().getString(), Normalizer.Form.NFD)
+            .replaceAll("\\p{M}+", "")
+            .toLowerCase(Locale.ROOT);
+        return name.contains("hat giong mua he") || name.contains("summer seed");
     }
 
     private static Item getSeedForBlock(Block block) {
