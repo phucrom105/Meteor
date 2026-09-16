@@ -76,6 +76,13 @@ public class AutoHarvest extends Module {
         .build()
     );
 
+    private final Setting<HarvestMode> harvestMode = sgGeneral.add(new EnumSetting.Builder<HarvestMode>()
+        .name("harvest-mode")
+        .description("Nuker sends instant break packets to several mature crops each tick. Legit uses normal mining.")
+        .defaultValue(HarvestMode.Nuker)
+        .build()
+    );
+
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
         .name("range")
         .description("Harvesting range around the player.")
@@ -97,7 +104,7 @@ public class AutoHarvest extends Module {
     private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("blocks-per-tick")
         .description("Maximum mature crops harvested per action tick.")
-        .defaultValue(1)
+        .defaultValue(5)
         .range(1, 10)
         .sliderRange(1, 10)
         .build()
@@ -105,8 +112,9 @@ public class AutoHarvest extends Module {
 
     private final Setting<Boolean> packetMine = sgGeneral.add(new BoolSetting.Builder()
         .name("packet-mine")
-        .description("Harvests using start and stop destroy packets.")
+        .description("Uses start and stop destroy packets in Legit mode. Nuker mode always uses packets.")
         .defaultValue(false)
+        .visible(() -> harvestMode.get() == HarvestMode.Legit)
         .build()
     );
 
@@ -136,6 +144,30 @@ public class AutoHarvest extends Module {
         .description("Movement layout. Irrigated 11x11 uses watered stone-brick stairs as plot centers.")
         .defaultValue(FarmLayout.Irrigated11x11)
         .visible(autoMove::get)
+        .build()
+    );
+
+    private final Setting<MovementEngine> movementEngine = sgMovement.add(new EnumSetting.Builder<MovementEngine>()
+        .name("movement-engine")
+        .description("Auto prefers Baritone and falls back to direct walking when Baritone is unavailable.")
+        .defaultValue(MovementEngine.Auto)
+        .visible(autoMove::get)
+        .build()
+    );
+
+    private final Setting<Boolean> directSprint = sgMovement.add(new BoolSetting.Builder()
+        .name("direct-sprint")
+        .description("Sprints while using the built-in direct movement fallback.")
+        .defaultValue(true)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
+        .build()
+    );
+
+    private final Setting<Boolean> directAutoJump = sgMovement.add(new BoolSetting.Builder()
+        .name("direct-auto-jump")
+        .description("Jumps when direct movement meets a solid obstacle.")
+        .defaultValue(true)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
         .build()
     );
 
@@ -229,6 +261,8 @@ public class AutoHarvest extends Module {
     private boolean warnedNoPathManager;
     private boolean warnedNoDepositItems;
     private BlockPos movementTarget;
+    private BlockPos directMovementPoint;
+    private boolean directMoving;
 
     public AutoHarvest() {
         super(Categories.Dava, "auto-harvest", "Harvests one selected mature crop type at a time without controlling Nuker.");
@@ -248,6 +282,8 @@ public class AutoHarvest extends Module {
         warnedNoPathManager = false;
         warnedNoDepositItems = false;
         movementTarget = null;
+        directMovementPoint = null;
+        directMoving = false;
         announceActiveCrop();
     }
 
@@ -386,9 +422,10 @@ public class AutoHarvest extends Module {
         if (breakTimer++ < breakDelay.get()) return;
         breakTimer = 0;
 
+        int limit = harvestMode.get() == HarvestMode.Nuker ? Math.max(5, blocksPerTick.get()) : blocksPerTick.get();
         int harvested = 0;
         for (BlockPos target : targets) {
-            if (harvested >= blocksPerTick.get()) break;
+            if (harvested >= limit) break;
 
             Runnable action = () -> breakCrop(target);
             if (rotate.get()) Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target), action);
@@ -400,7 +437,7 @@ public class AutoHarvest extends Module {
     }
 
     private void breakCrop(BlockPos pos) {
-        if (packetMine.get()) {
+        if (harvestMode.get() == HarvestMode.Nuker || packetMine.get()) {
             mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, BlockUtils.getDirection(pos), sequence));
 
@@ -415,11 +452,23 @@ public class AutoHarvest extends Module {
     }
 
     private boolean searchOrContinuePath() {
+        if (!autoMove.get()) {
+            stopPathing();
+            if (moveScanTimer++ < moveScanDelay.get()) return false;
+            moveScanTimer = 0;
+            return true;
+        }
+
         if (movementTarget != null) {
             if (!isHarvestTarget(movementTarget)) {
                 stopPathing();
             } else if (isWithinActionRange(movementTarget)) {
                 stopPathing();
+                return false;
+            } else if (directMoving) {
+                if (usesDirectMovement()) updateDirectMovement();
+                else moveToTarget(movementTarget);
+                emptyScans = 0;
                 return false;
             } else if (PathManagers.get().isPathing()) {
                 emptyScans = 0;
@@ -430,8 +479,6 @@ public class AutoHarvest extends Module {
         if (moveScanTimer++ < moveScanDelay.get()) return false;
         moveScanTimer = 0;
 
-        if (!autoMove.get()) return true;
-
         BlockPos target = findNearestDistantTarget();
         if (target == null) {
             stopPathing();
@@ -441,9 +488,9 @@ public class AutoHarvest extends Module {
         emptyScans = 0;
         if (isWithinActionRange(target)) return false;
 
-        if (PathManagers.get() instanceof NopPathManager) {
+        if (movementEngine.get() == MovementEngine.Baritone && PathManagers.get() instanceof NopPathManager) {
             if (!warnedNoPathManager) {
-                warning("Auto Move requires Baritone or another path manager. Local harvesting will continue.");
+                warning("Baritone movement was selected, but Baritone is unavailable. Select Auto or Direct for built-in walking.");
                 warnedNoPathManager = true;
             }
             return false;
@@ -487,13 +534,49 @@ public class AutoHarvest extends Module {
 
     private void moveToTarget(BlockPos workTarget) {
         BlockPos movementPoint = getMovementPoint(workTarget);
+        stopPathing();
+        movementTarget = workTarget;
+
+        if (usesDirectMovement()) {
+            directMovementPoint = movementPoint;
+            directMoving = true;
+            updateDirectMovement();
+            return;
+        }
+
         BlockState movementState = mc.world.getBlockState(movementPoint);
         BlockPos pathTarget = movementState.isAir() ? movementPoint.down() : movementPoint;
 
-        if (pathingByModule) PathManagers.get().stop();
         PathManagers.get().moveTo(pathTarget);
         pathingByModule = true;
-        movementTarget = workTarget;
+    }
+
+    private boolean usesDirectMovement() {
+        return movementEngine.get() == MovementEngine.Direct
+            || movementEngine.get() == MovementEngine.Auto && PathManagers.get() instanceof NopPathManager;
+    }
+
+    private void updateDirectMovement() {
+        if (!directMoving || directMovementPoint == null) return;
+
+        double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+        double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+
+        mc.player.setYaw(yaw);
+        mc.player.setHeadYaw(yaw);
+        mc.options.forwardKey.setPressed(true);
+        mc.options.sprintKey.setPressed(directSprint.get());
+        mc.options.jumpKey.setPressed(directAutoJump.get() && mc.player.horizontalCollision && mc.player.isOnGround());
+    }
+
+    private void stopDirectMovement() {
+        if (!directMoving) return;
+        mc.options.forwardKey.setPressed(false);
+        mc.options.sprintKey.setPressed(false);
+        mc.options.jumpKey.setPressed(false);
+        directMoving = false;
+        directMovementPoint = null;
     }
 
     private BlockPos getMovementPoint(BlockPos workTarget) {
@@ -549,6 +632,7 @@ public class AutoHarvest extends Module {
 
     private void stopPathing() {
         if (pathingByModule) PathManagers.get().stop();
+        stopDirectMovement();
         pathingByModule = false;
         movementTarget = null;
     }
@@ -650,6 +734,17 @@ public class AutoHarvest extends Module {
             || item == Items.BEETROOT_SEEDS
             || item == Items.PUMPKIN_SEEDS
             || item == Items.MELON_SEEDS;
+    }
+
+    public enum HarvestMode {
+        Nuker,
+        Legit
+    }
+
+    public enum MovementEngine {
+        Auto,
+        Baritone,
+        Direct
     }
 
     public enum FarmLayout {
