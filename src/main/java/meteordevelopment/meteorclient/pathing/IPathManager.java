@@ -24,6 +24,14 @@ public interface IPathManager {
 
     default void moveTo(BlockPos pos) { moveTo(pos, false); }
     void moveTo(BlockPos pos, boolean ignoreY);
+
+    /**
+     * Moves the player onto the requested block position instead of merely next
+     * to it. Path managers without exact-goal support retain the normal move
+     * behavior.
+     */
+    default void moveToExact(BlockPos pos) { moveTo(pos); }
+
     void moveInDirection(float yaw);
 
     void mine(Block... blocks);

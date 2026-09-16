@@ -6,6 +6,8 @@
 package meteordevelopment.meteorclient.systems.modules.dava;
 
 import meteordevelopment.meteorclient.events.entity.player.BlockBreakingCooldownEvent;
+import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -17,6 +19,8 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
@@ -29,6 +33,9 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.CropBlock;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -36,7 +43,12 @@ import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.screen.GenericContainerScreenHandler;
+import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.slot.Slot;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
@@ -165,7 +177,7 @@ public class AutoHarvest extends Module {
 
     private final Setting<MovementEngine> movementEngine = sgMovement.add(new EnumSetting.Builder<MovementEngine>()
         .name("movement-engine")
-        .description("Auto prefers Baritone and falls back to direct walking when Baritone is unavailable.")
+        .description("Auto prefers Baritone, Direct walks normally, and Fly uses server-granted flight.")
         .defaultValue(MovementEngine.Auto)
         .visible(autoMove::get)
         .build()
@@ -173,7 +185,7 @@ public class AutoHarvest extends Module {
 
     private final Setting<Boolean> directSprint = sgMovement.add(new BoolSetting.Builder()
         .name("direct-sprint")
-        .description("Sprints while using the built-in direct movement fallback.")
+        .description("Uses faster horizontal movement with the Direct or Fly engine.")
         .defaultValue(true)
         .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
         .build()
@@ -183,7 +195,17 @@ public class AutoHarvest extends Module {
         .name("direct-auto-jump")
         .description("Jumps when direct movement meets a solid obstacle.")
         .defaultValue(true)
-        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone && movementEngine.get() != MovementEngine.Fly)
+        .build()
+    );
+
+    private final Setting<Integer> flyHeight = sgMovement.add(new IntSetting.Builder()
+        .name("fly-height")
+        .description("Blocks above crop level used while flying. Two keeps an 11x11 work area within interaction range.")
+        .defaultValue(2)
+        .range(1, 2)
+        .sliderRange(1, 2)
+        .visible(() -> autoMove.get() && movementEngine.get() == MovementEngine.Fly)
         .build()
     );
 
@@ -208,8 +230,24 @@ public class AutoHarvest extends Module {
 
     private final Setting<Boolean> autoDeposit = sgInventory.add(new BoolSetting.Builder()
         .name("auto-deposit")
-        .description("Drops harvested items when the main inventory is full so the server can store them.")
+        .description("Drops non-priority planting seeds into island storage and stores server rewards in the configured chest.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<BlockPos> storageChest = sgInventory.add(new BlockPosSetting.Builder()
+        .name("storage-chest")
+        .description("Chest or barrel used when no room remains for another priority seed. Aim at it and press Set Storage Bind to save it.")
+        .defaultValue(BlockPos.ORIGIN)
+        .visible(autoDeposit::get)
+        .build()
+    );
+
+    private final Setting<Keybind> setStorageBind = sgInventory.add(new KeybindSetting.Builder()
+        .name("set-storage-bind")
+        .description("Saves the chest or barrel currently under the crosshair as storage.")
+        .defaultValue(Keybind.none())
+        .visible(autoDeposit::get)
         .build()
     );
 
@@ -217,18 +255,28 @@ public class AutoHarvest extends Module {
         .name("empty-slots-after-deposit")
         .description("Inventory slots to free before harvesting resumes.")
         .defaultValue(3)
-        .range(1, 9)
-        .sliderRange(1, 9)
+        .range(3, 9)
+        .sliderRange(3, 9)
         .visible(autoDeposit::get)
         .build()
     );
 
-    private final Setting<Integer> dropDelay = sgInventory.add(new IntSetting.Builder()
-        .name("drop-delay")
-        .description("Ticks between dropped stacks.")
+    private final Setting<Integer> depositDelay = sgInventory.add(new IntSetting.Builder()
+        .name("deposit-delay")
+        .description("Ticks between inventory transfers into the storage chest.")
         .defaultValue(1)
         .min(0)
         .sliderMax(20)
+        .visible(autoDeposit::get)
+        .build()
+    );
+
+    private final Setting<Integer> islandStorageWait = sgInventory.add(new IntSetting.Builder()
+        .name("island-storage-wait")
+        .description("Ticks to wait after dropping a planting item for island storage to collect it.")
+        .defaultValue(20)
+        .range(1, 100)
+        .sliderRange(5, 40)
         .visible(autoDeposit::get)
         .build()
     );
@@ -273,14 +321,18 @@ public class AutoHarvest extends Module {
     private int emptyScans;
     private int breakTimer;
     private int moveScanTimer;
-    private int dropTimer;
+    private int depositTimer;
+    private int chestOpenTimer;
+    private int islandStorageWaitTicks;
     private boolean pathingByModule;
     private boolean depositingInventory;
     private boolean warnedNoPathManager;
-    private boolean warnedNoDepositItems;
+    private boolean warnedDepositBlocked;
     private BlockPos movementTarget;
     private BlockPos directMovementPoint;
+    private BlockPos flyLandingPoint;
     private boolean directMoving;
+    private boolean flyLandingUnavailable;
 
     public AutoHarvest() {
         super(Categories.Dava, "auto-harvest", "Harvests one selected mature crop type at a time without controlling Nuker.");
@@ -296,19 +348,24 @@ public class AutoHarvest extends Module {
         emptyScans = 0;
         breakTimer = 0;
         moveScanTimer = moveScanDelay.get();
-        dropTimer = 0;
+        depositTimer = 0;
+        chestOpenTimer = 0;
+        islandStorageWaitTicks = 0;
         pathingByModule = false;
         depositingInventory = false;
         warnedNoPathManager = false;
-        warnedNoDepositItems = false;
+        warnedDepositBlocked = false;
         movementTarget = null;
         directMovementPoint = null;
+        flyLandingPoint = null;
         directMoving = false;
+        flyLandingUnavailable = false;
         announceActiveCrop();
     }
 
     @Override
     public void onDeactivate() {
+        if (depositingInventory && mc.currentScreen instanceof HandledScreen<?>) mc.currentScreen.close();
         stopPathing();
         targets.clear();
         targetCooldowns.clear();
@@ -329,6 +386,12 @@ public class AutoHarvest extends Module {
         tickTargetCooldowns();
         tickNewlyPlanted();
 
+        if (depositingInventory) {
+            targets.clear();
+            depositInventory();
+            return;
+        }
+
         if (mc.currentScreen != null) {
             stopPathing();
             targets.clear();
@@ -348,8 +411,9 @@ public class AutoHarvest extends Module {
             return;
         }
 
-        if (depositingInventory || (autoDeposit.get() && isInventoryFull())) {
+        if (autoDeposit.get() && needsSeedStorageSpace() && hasInventoryDepositCandidate()) {
             depositingInventory = true;
+            warnedDepositBlocked = false;
             stopPathing();
             targets.clear();
             depositInventory();
@@ -376,6 +440,31 @@ public class AutoHarvest extends Module {
         for (BlockPos target : targets) {
             event.renderer.box(target, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
         }
+    }
+
+    @EventHandler
+    private void onKey(KeyEvent event) {
+        if (event.action == KeyAction.Press) saveTargetedStorage();
+    }
+
+    @EventHandler
+    private void onMouseClick(MouseClickEvent event) {
+        if (event.action == KeyAction.Press) saveTargetedStorage();
+    }
+
+    private void saveTargetedStorage() {
+        if (!setStorageBind.get().isPressed() || mc.currentScreen != null) return;
+        if (!(mc.crosshairTarget instanceof BlockHitResult hitResult)) return;
+
+        BlockPos pos = hitResult.getBlockPos();
+        if (!isStorageBlock(mc.world.getBlockState(pos))) {
+            warning("Target a chest, trapped chest, or barrel before pressing Set Storage Bind.");
+            return;
+        }
+
+        storageChest.set(pos.toImmutable());
+        warnedDepositBlocked = false;
+        info("Storage saved at %d, %d, %d.", pos.getX(), pos.getY(), pos.getZ());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -679,26 +768,33 @@ public class AutoHarvest extends Module {
         movementTarget = workTarget;
 
         if (usesDirectMovement()) {
-            directMovementPoint = movementPoint;
+            directMovementPoint = getDirectMovementPoint(movementPoint);
             directMoving = true;
             updateDirectMovement();
             return;
         }
 
-        BlockState movementState = mc.world.getBlockState(movementPoint);
-        BlockPos pathTarget = movementState.isAir() ? movementPoint.down() : movementPoint;
-
-        PathManagers.get().moveTo(pathTarget);
+        // GoalGetToBlock may stop on the far side of this waypoint. That can
+        // leave the crop outside interaction range and make Baritone repeatedly
+        // select the same already handled plot. Farming needs the player to
+        // stand on the calculated work point itself.
+        PathManagers.get().moveToExact(movementPoint);
         pathingByModule = true;
     }
 
     private boolean usesDirectMovement() {
         return movementEngine.get() == MovementEngine.Direct
+            || movementEngine.get() == MovementEngine.Fly
             || movementEngine.get() == MovementEngine.Auto && PathManagers.get() instanceof NopPathManager;
     }
 
     private void updateDirectMovement() {
         if (!directMoving || directMovementPoint == null) return;
+
+        if (movementEngine.get() == MovementEngine.Fly) {
+            updateFlyMovement();
+            return;
+        }
 
         double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
         double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
@@ -712,11 +808,82 @@ public class AutoHarvest extends Module {
         mc.options.jumpKey.setPressed(directAutoJump.get() && mc.player.horizontalCollision && mc.player.isOnGround());
     }
 
-    private void stopDirectMovement() {
-        if (!directMoving) return;
+    private void updateFlyMovement() {
+        if (!ensureFlying()) {
+            releaseMovementKeys();
+            return;
+        }
+
+        double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+        double dy = directMovementPoint.getY() - mc.player.getY();
+        double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+        float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
+
+        mc.player.setYaw(yaw);
+        mc.player.setHeadYaw(yaw);
+        boolean nearHorizontal = dx * dx + dz * dz <= 0.16;
+        mc.options.forwardKey.setPressed(!nearHorizontal);
+        mc.options.sprintKey.setPressed(directSprint.get());
+        mc.options.jumpKey.setPressed(dy > 0.3);
+        mc.options.sneakKey.setPressed(dy < -0.3 || nearHorizontal && !mc.player.isOnGround());
+    }
+
+    private void updateLandingMovement() {
+        // Never call ensureFlying while landing: /is fly is a toggle command and
+        // sending it during a descent could turn flight back on. Vanilla/server
+        // flight uses sneak to descend; the same key is also understood by the
+        // optional Flight velocity mode.
+        if (mc.player.getAbilities().flying) {
+            double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+            double dy = directMovementPoint.getY() - mc.player.getY();
+            double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+            float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+            float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
+            boolean nearHorizontal = dx * dx + dz * dz <= 0.16;
+
+            mc.player.setYaw(yaw);
+            mc.player.setHeadYaw(yaw);
+            mc.options.forwardKey.setPressed(!nearHorizontal);
+            mc.options.sprintKey.setPressed(directSprint.get());
+            mc.options.jumpKey.setPressed(false);
+            mc.options.sneakKey.setPressed(true);
+            return;
+        }
+
+        // If the server already turned off flight, finish approaching the safe
+        // point on foot while gravity brings the player down naturally.
+        double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+        double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+        float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
+
+        mc.player.setYaw(yaw);
+        mc.player.setHeadYaw(yaw);
+        mc.options.forwardKey.setPressed(dx * dx + dz * dz > 0.16 && mc.player.isOnGround());
+        mc.options.sprintKey.setPressed(false);
+        mc.options.jumpKey.setPressed(false);
+        mc.options.sneakKey.setPressed(!mc.player.isOnGround());
+    }
+
+    private boolean ensureFlying() {
+        return FarmFlightController.ensureFlying(this);
+    }
+
+    private BlockPos getDirectMovementPoint(BlockPos movementPoint) {
+        return movementEngine.get() == MovementEngine.Fly ? movementPoint.up(flyHeight.get()) : movementPoint;
+    }
+
+    private void releaseMovementKeys() {
         mc.options.forwardKey.setPressed(false);
         mc.options.sprintKey.setPressed(false);
         mc.options.jumpKey.setPressed(false);
+        mc.options.sneakKey.setPressed(false);
+    }
+
+    private void stopDirectMovement() {
+        if (!directMoving) return;
+        releaseMovementKeys();
         directMoving = false;
         directMovementPoint = null;
     }
@@ -779,10 +946,19 @@ public class AutoHarvest extends Module {
         movementTarget = null;
     }
 
-    private boolean isInventoryFull() {
+    private boolean needsSeedStorageSpace() {
+        // Depositing is a seed-capacity decision, not a blanket inventory
+        // decision. An empty slot, or a partially filled stack of a priority
+        // seed, can still accept the next planting reward and must not trigger
+        // chest handling yet.
         for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
-            if (mc.player.getInventory().getStack(slot).isEmpty()) return false;
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (stack.isEmpty()) return false;
+            if (!isServerRewardItem(stack)
+                && isActivePlantingItem(stack.getItem())
+                && stack.getCount() < stack.getMaxCount()) return false;
         }
+
         return true;
     }
 
@@ -794,58 +970,438 @@ public class AutoHarvest extends Module {
         return count;
     }
 
+    private int requiredEmptySlots() {
+        // Keep a hard safety floor even for an older saved config that used the
+        // former 1- or 2-slot range.
+        return Math.max(3, emptySlotsAfterDeposit.get());
+    }
+
     private void depositInventory() {
-        if (getEmptySlotCount() >= emptySlotsAfterDeposit.get()) {
-            depositingInventory = false;
-            warnedNoDepositItems = false;
-            dropTimer = 0;
+        if (islandStorageWaitTicks > 0) {
+            // Stay on the safe landing point while the server transfers the
+            // dropped planting item into island storage.
+            releaseMovementKeys();
+            islandStorageWaitTicks--;
             return;
         }
 
-        if (dropTimer++ < dropDelay.get()) return;
-        dropTimer = 0;
+        if (getEmptySlotCount() >= requiredEmptySlots()) {
+            finishDepositing();
+            return;
+        }
 
-        int slot = findDepositSlot(false);
-        if (slot == -1) slot = findDepositSlot(true);
-        if (slot == -1) {
-            if (!warnedNoDepositItems) {
-                warning("Inventory is full, but no selected harvested items can be deposited.");
-                warnedNoDepositItems = true;
+        // The island storage plugin collects planting items dropped at the
+        // player's feet. Only these known seeds/crops may use the drop path;
+        // harvested produce, rewards, and unknown items go to the chest.
+        if (mc.currentScreen == null && dropFarmItemToIslandStorage()) return;
+
+        // Do not walk to/open a chest when the inventory contains no server
+        // reward at all. This is the normal state when every remaining stack is
+        // the active priority seed; that seed must stay in the inventory.
+        if (mc.currentScreen == null && !hasInventoryStorageCandidate()) {
+            if (dropPrioritySeedForWithdrawAll()) return;
+
+            // There is nothing safe to move: only priority seeds and tools are
+            // left. Close any previous deposit state and continue farming
+            // instead of opening the chest forever for an impossible third slot.
+            finishDepositing();
+            return;
+        }
+
+        BlockPos chestPos = storageChest.get();
+        if (chestPos.equals(BlockPos.ORIGIN)) {
+            warnDepositBlocked("No room remains for the priority seed, but no storage chest is configured. Aim at a chest and press Set Storage Bind.");
+            return;
+        }
+
+        if (mc.currentScreen instanceof HandledScreen<?> screen) {
+            if (screen.getScreenHandler() instanceof GenericContainerScreenHandler handler) {
+                transferToStorage(handler);
+            } else {
+                warnDepositBlocked("No room remains for the priority seed, but another container screen is open. Close it to continue storage.");
             }
             return;
         }
 
-        InvUtils.drop().slot(slot);
+        if (mc.currentScreen != null) {
+            warnDepositBlocked("No room remains for the priority seed. Close the current screen so Auto Harvest can reach storage.");
+            return;
+        }
+
+        boolean chestChunkLoaded = mc.world.getChunkManager().isChunkLoaded(chestPos.getX() >> 4, chestPos.getZ() >> 4);
+        if (chestChunkLoaded && !isStorageBlock(mc.world.getBlockState(chestPos))) {
+            stopPathing();
+            warnDepositBlocked("The saved storage block is missing. Aim at another chest and press Set Storage Bind.");
+            return;
+        }
+
+        if (!isWithinStorageRange(chestPos)) {
+            moveToStorage(chestPos);
+            return;
+        }
+
+        stopPathing();
+        if (chestOpenTimer++ < 10) return;
+        chestOpenTimer = 0;
+
+        Runnable action = () -> BlockUtils.interact(new BlockHitResult(
+            Vec3d.ofCenter(chestPos), BlockUtils.getDirection(chestPos), chestPos, false), Hand.MAIN_HAND, swing.get());
+        if (rotate.get()) Rotations.rotate(Rotations.getYaw(chestPos), Rotations.getPitch(chestPos), action);
+        else action.run();
     }
 
-    private int findDepositSlot(boolean includePlantingItems) {
-        for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
+    private void transferToStorage(GenericContainerScreenHandler handler) {
+        if (depositTimer++ < depositDelay.get()) return;
+        depositTimer = 0;
+
+        Slot playerSlot = findMainInventorySlot(handler);
+        if (playerSlot == null) {
+            if (!hasStorageCandidate(handler)) {
+                finishDepositing();
+            } else {
+                warnDepositBlocked("The storage chest is full. Auto Harvest is paused and no items will be dropped.");
+            }
+            return;
+        }
+
+        warnedDepositBlocked = false;
+        mc.interactionManager.clickSlot(handler.syncId, playerSlot.id, 0, SlotActionType.QUICK_MOVE, mc.player);
+    }
+
+    private boolean dropFarmItemToIslandStorage() {
+        int slot = findFarmStorageSlot(SlotUtils.MAIN_START, SlotUtils.MAIN_END);
+        if (slot == -1) slot = findFarmStorageSlot(SlotUtils.HOTBAR_START, SlotUtils.HOTBAR_END);
+        return dropItemToIslandStorage(slot);
+    }
+
+    private boolean dropPrioritySeedForWithdrawAll() {
+        int slot = findPrioritySeedSlot(SlotUtils.MAIN_START, SlotUtils.MAIN_END);
+        if (slot == -1) slot = findPrioritySeedSlot(SlotUtils.HOTBAR_START, SlotUtils.HOTBAR_END);
+        return dropItemToIslandStorage(slot);
+    }
+
+    private boolean dropItemToIslandStorage(int slot) {
+        if (slot == -1) return false;
+
+        if (movementEngine.get() == MovementEngine.Fly) {
+            if (flyLandingUnavailable) return true;
+
+            if (flyLandingPoint == null) {
+                flyLandingPoint = findSafeLandingPoint();
+                if (flyLandingPoint == null) {
+                    flyLandingUnavailable = true;
+                    warnDepositBlocked("Farm items cannot be dropped while flying: no safe non-farmland landing position was found.");
+                    return true;
+                }
+
+                directMovementPoint = flyLandingPoint;
+                directMoving = true;
+            }
+
+            if (!isAtSafeLandingPoint()) {
+                updateLandingMovement();
+                return true;
+            }
+
+            releaseMovementKeys();
+        }
+
+        if (depositTimer++ < depositDelay.get()) return true;
+        depositTimer = 0;
+        InvUtils.drop().slot(slot);
+        islandStorageWaitTicks = islandStorageWait.get();
+        return true;
+    }
+
+    private BlockPos findSafeLandingPoint() {
+        BlockPos origin = mc.player.getBlockPos();
+        int radius = 8;
+        int bottomY = mc.world.getBottomY() + 1;
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+
+        for (int x = origin.getX() - radius; x <= origin.getX() + radius; x++) {
+            for (int z = origin.getZ() - radius; z <= origin.getZ() + radius; z++) {
+                for (int y = origin.getY(); y >= bottomY; y--) {
+                    BlockPos candidate = new BlockPos(x, y, z);
+                    BlockState feet = mc.world.getBlockState(candidate);
+                    BlockState head = mc.world.getBlockState(candidate.up());
+                    BlockState floor = mc.world.getBlockState(candidate.down());
+                    if (!feet.isAir() || !head.isAir() || floor.isReplaceable()
+                        || floor.getBlock() == Blocks.FARMLAND || !floor.getFluidState().isEmpty()
+                        || floor.getCollisionShape(mc.world, candidate.down()).isEmpty()) continue;
+
+                    double distance = candidate.getSquaredDistance(mc.player.getEntityPos());
+                    if (distance < bestDistance) {
+                        best = candidate;
+                        bestDistance = distance;
+                    }
+                    break;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private boolean isAtSafeLandingPoint() {
+        if (flyLandingPoint == null) return false;
+        double dx = mc.player.getX() - (flyLandingPoint.getX() + 0.5);
+        double dy = mc.player.getY() - flyLandingPoint.getY();
+        double dz = mc.player.getZ() - (flyLandingPoint.getZ() + 0.5);
+        return dx * dx + dz * dz <= 0.36 && Math.abs(dy) <= 0.35 && mc.player.isOnGround();
+    }
+
+    private int findFarmStorageSlot(int from, int to) {
+        for (int slot = from; slot <= to; slot++) {
             ItemStack stack = mc.player.getInventory().getStack(slot);
-            if (!isHarvestedItem(stack)) continue;
-            if (!includePlantingItems && isSupportedCropChoice(stack.getItem()) && !isSummerSeed(stack)) continue;
-            return slot;
+            if (isFarmStorageItem(stack) && !isActivePlantingItem(stack.getItem())) return slot;
         }
         return -1;
     }
 
-    private boolean isHarvestedItem(ItemStack stack) {
-        if (isSummerSeed(stack)) return true;
-
-        Item item = stack.getItem();
-        List<Item> selected = cropOrder.get();
-        if (selected.contains(Items.WHEAT_SEEDS) && (item == Items.WHEAT || item == Items.WHEAT_SEEDS)) return true;
-        if (selected.contains(Items.CARROT) && item == Items.CARROT) return true;
-        if (selected.contains(Items.POTATO) && (item == Items.POTATO || item == Items.POISONOUS_POTATO)) return true;
-        if (selected.contains(Items.BEETROOT_SEEDS) && (item == Items.BEETROOT || item == Items.BEETROOT_SEEDS)) return true;
-        if (selected.contains(Items.PUMPKIN_SEEDS) && (item == Items.PUMPKIN || item == Items.PUMPKIN_SEEDS)) return true;
-        return selected.contains(Items.MELON_SEEDS) && (item == Items.MELON_SLICE || item == Items.MELON_SEEDS);
+    private int findPrioritySeedSlot(int from, int to) {
+        for (int slot = from; slot <= to; slot++) {
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (isFarmStorageItem(stack) && isWithdrawingAllPrioritySeed(stack.getItem())) return slot;
+        }
+        return -1;
     }
 
-    private static boolean isSummerSeed(ItemStack stack) {
+    private boolean isActivePlantingItem(Item item) {
+        if (item == activeCrop) return true;
+
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        return autoPlant != null && autoPlant.isPlantingItem(item);
+    }
+
+    private boolean isWithdrawingAllPrioritySeed(Item item) {
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        return autoPlant != null && autoPlant.isWithdrawingAllFor(item);
+    }
+
+    private Slot findMainInventorySlot(ScreenHandler handler) {
+        // Named server rewards in the hotbar have priority over ordinary
+        // storage candidates so a reward never remains trapped in slots 1-9.
+        for (Slot slot : handler.slots) {
+            if (!(slot.inventory instanceof PlayerInventory) || !slot.hasStack()) continue;
+
+            int inventoryIndex = slot.getIndex();
+            if (inventoryIndex < 0 || inventoryIndex > 8) continue;
+            if (!isServerRewardItem(slot.getStack()) || !isStorageCandidate(slot.getStack())) continue;
+            if (canStorageAccept(handler, slot.getStack())) return slot;
+        }
+
+        for (Slot slot : handler.slots) {
+            if (!(slot.inventory instanceof PlayerInventory) || !slot.hasStack()) continue;
+
+            // Planting seeds and damageable tools are handled elsewhere. Other
+            // stacks in the main inventory are server rewards for storage.
+            int inventoryIndex = slot.getIndex();
+            if (inventoryIndex < 9 || inventoryIndex > 35) continue;
+            if (!isStorageCandidate(slot.getStack())) continue;
+            if (canStorageAccept(handler, slot.getStack())) return slot;
+        }
+
+        // Rewards can also land in the hotbar. Do not protect the whole bar:
+        // preserve only the active planting seed and damageable tools, while
+        // moving ordinary reward stacks (including the custom summer-seed reward).
+        for (Slot slot : handler.slots) {
+            if (!(slot.inventory instanceof PlayerInventory) || !slot.hasStack()) continue;
+
+            int inventoryIndex = slot.getIndex();
+            if (inventoryIndex < 0 || inventoryIndex > 8) continue;
+            if (!isStorageCandidate(slot.getStack())) continue;
+            if (canStorageAccept(handler, slot.getStack())) return slot;
+        }
+
+        return null;
+    }
+
+    private boolean hasStorageCandidate(ScreenHandler handler) {
+        for (Slot slot : handler.slots) {
+            if (!(slot.inventory instanceof PlayerInventory) || !slot.hasStack()) continue;
+
+            int inventoryIndex = slot.getIndex();
+            if (inventoryIndex < 0 || inventoryIndex > 35) continue;
+            if (isStorageCandidate(slot.getStack())) return true;
+        }
+
+        return false;
+    }
+
+    private boolean hasInventoryStorageCandidate() {
+        for (int inventoryIndex = SlotUtils.HOTBAR_START; inventoryIndex <= SlotUtils.MAIN_END; inventoryIndex++) {
+            ItemStack stack = mc.player.getInventory().getStack(inventoryIndex);
+            if (stack.isEmpty()) continue;
+
+            if (isStorageCandidate(stack)) return true;
+        }
+
+        return false;
+    }
+
+    private boolean hasInventoryDepositCandidate() {
+        return hasInventoryStorageCandidate() || hasInventoryFarmCandidate() || hasPrioritySeedOverflowCandidate();
+    }
+
+    private boolean hasInventoryFarmCandidate() {
+        for (int inventoryIndex = SlotUtils.HOTBAR_START; inventoryIndex <= SlotUtils.MAIN_END; inventoryIndex++) {
+            ItemStack stack = mc.player.getInventory().getStack(inventoryIndex);
+            if (isFarmStorageItem(stack) && !isActivePlantingItem(stack.getItem())) return true;
+        }
+
+        return false;
+    }
+
+    private boolean hasPrioritySeedOverflowCandidate() {
+        for (int inventoryIndex = SlotUtils.HOTBAR_START; inventoryIndex <= SlotUtils.MAIN_END; inventoryIndex++) {
+            ItemStack stack = mc.player.getInventory().getStack(inventoryIndex);
+            if (isFarmStorageItem(stack) && isWithdrawingAllPrioritySeed(stack.getItem())) return true;
+        }
+
+        return false;
+    }
+
+    private static boolean isStorageCandidate(ItemStack stack) {
+        return !stack.isEmpty()
+            && !stack.isDamageable()
+            && !isFarmStorageItem(stack);
+    }
+
+    private boolean canStorageAccept(ScreenHandler handler, ItemStack stack) {
+        for (Slot slot : handler.slots) {
+            if (slot.inventory instanceof PlayerInventory || !slot.canInsert(stack)) continue;
+            if (!slot.hasStack()) return true;
+
+            ItemStack stored = slot.getStack();
+            if (ItemStack.areItemsAndComponentsEqual(stored, stack)
+                && stored.getCount() < Math.min(stored.getMaxCount(), slot.getMaxItemCount(stack))) return true;
+        }
+
+        return false;
+    }
+
+    private static boolean isFarmStorageItem(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        // The custom summer seed uses a vanilla seed item underneath its server
+        // name. It is a reward, not a planting seed, so it must go to the chest.
+        return isSupportedCropChoice(stack.getItem()) && !isServerRewardItem(stack);
+    }
+
+    private static boolean isServerRewardItem(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+
         String name = Normalizer.normalize(stack.getName().getString(), Normalizer.Form.NFD)
             .replaceAll("\\p{M}+", "")
             .toLowerCase(Locale.ROOT);
-        return name.contains("hat giong mua he") || name.contains("summer seed");
+        if (name.contains("hat giong mua he") || name.contains("hat mua he") || name.contains("summer seed")
+            || name.contains("bo ra dat vang") || name.contains("golden straw bale")
+            || name.contains("dong ho sinh hoc") || name.contains("biological clock")
+            || name.contains("nguyen to 991") || name.contains("element 991")) return true;
+
+        // Some servers keep the vanilla seed id but add only a custom name or
+        // lore. Such a stack is a reward as well, and must not be dropped as a
+        // normal planting seed.
+        return isSupportedCropChoice(stack.getItem())
+            && (stack.contains(DataComponentTypes.CUSTOM_NAME)
+            || stack.contains(DataComponentTypes.ITEM_NAME)
+            || stack.contains(DataComponentTypes.LORE));
+    }
+
+    private void moveToStorage(BlockPos chestPos) {
+        if (movementTarget != null && movementTarget.equals(chestPos)) {
+            if (directMoving) {
+                if (usesDirectMovement()) updateDirectMovement();
+                else stopDirectMovement();
+                if (directMoving) return;
+            } else if (pathingByModule && PathManagers.get().isPathing()) {
+                return;
+            }
+        }
+
+        if (moveScanTimer++ < moveScanDelay.get()) return;
+        moveScanTimer = 0;
+
+        if (movementEngine.get() == MovementEngine.Baritone && PathManagers.get() instanceof NopPathManager) {
+            if (!warnedNoPathManager) {
+                warning("Baritone movement was selected, but Baritone is unavailable. Storage cannot be reached.");
+                warnedNoPathManager = true;
+            }
+            return;
+        }
+
+        stopPathing();
+        movementTarget = chestPos.toImmutable();
+
+        if (usesDirectMovement()) {
+            directMovementPoint = findStorageApproach(chestPos);
+            if (directMovementPoint == null) {
+                movementTarget = null;
+                warnDepositBlocked("No safe standing position was found beside the storage chest. Auto Harvest is paused.");
+                return;
+            }
+            directMovementPoint = getDirectMovementPoint(directMovementPoint);
+            directMoving = true;
+            updateDirectMovement();
+        } else {
+            // A normal get-to-block goal is correct here: any reachable side of
+            // the chest is close enough to interact with it.
+            PathManagers.get().moveTo(chestPos);
+            pathingByModule = true;
+        }
+    }
+
+    private BlockPos findStorageApproach(BlockPos chestPos) {
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+
+        for (int offset = 1; offset <= 2; offset++) {
+            for (Direction direction : Direction.Type.HORIZONTAL) {
+                BlockPos candidate = chestPos.offset(direction, offset);
+                BlockState feet = mc.world.getBlockState(candidate);
+                BlockState head = mc.world.getBlockState(candidate.up());
+                BlockState floor = mc.world.getBlockState(candidate.down());
+                if (!feet.isReplaceable() || !head.isReplaceable() || floor.isReplaceable()) continue;
+
+                double distance = candidate.getSquaredDistance(mc.player.getBlockPos());
+                if (distance < bestDistance) {
+                    best = candidate;
+                    bestDistance = distance;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private boolean isWithinStorageRange(BlockPos pos) {
+        double interactionRange = Math.min(4.25, mc.player.getBlockInteractionRange());
+        return Vec3d.ofCenter(pos).squaredDistanceTo(mc.player.getEyePos()) <= interactionRange * interactionRange;
+    }
+
+    private static boolean isStorageBlock(BlockState state) {
+        Block block = state.getBlock();
+        return block == Blocks.CHEST || block == Blocks.TRAPPED_CHEST || block == Blocks.BARREL;
+    }
+
+    private void warnDepositBlocked(String message) {
+        if (warnedDepositBlocked) return;
+        warning(message);
+        warnedDepositBlocked = true;
+    }
+
+    private void finishDepositing() {
+        if (mc.currentScreen instanceof HandledScreen<?>) mc.currentScreen.close();
+        stopPathing();
+        depositingInventory = false;
+        warnedDepositBlocked = false;
+        depositTimer = 0;
+        chestOpenTimer = 0;
+        islandStorageWaitTicks = 0;
+        flyLandingPoint = null;
+        flyLandingUnavailable = false;
+        moveScanTimer = moveScanDelay.get();
     }
 
     private static boolean isMatureCrop(BlockState state, Item cropChoice) {
@@ -897,7 +1453,8 @@ public class AutoHarvest extends Module {
     public enum MovementEngine {
         Auto,
         Baritone,
-        Direct
+        Direct,
+        Fly
     }
 
     public enum FarmLayout {

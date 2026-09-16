@@ -90,7 +90,7 @@ public class AutoPlant extends Module {
 
     private final Setting<MovementEngine> movementEngine = sgGeneral.add(new EnumSetting.Builder<MovementEngine>()
         .name("movement-engine")
-        .description("Auto prefers Baritone and falls back to direct walking when Baritone is unavailable.")
+        .description("Auto prefers Baritone, Direct walks normally, and Fly uses server-granted flight.")
         .defaultValue(MovementEngine.Auto)
         .visible(autoMove::get)
         .build()
@@ -98,7 +98,7 @@ public class AutoPlant extends Module {
 
     private final Setting<Boolean> directSprint = sgGeneral.add(new BoolSetting.Builder()
         .name("direct-sprint")
-        .description("Sprints while using the built-in direct movement fallback.")
+        .description("Uses faster horizontal movement with the Direct or Fly engine.")
         .defaultValue(true)
         .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
         .build()
@@ -108,7 +108,17 @@ public class AutoPlant extends Module {
         .name("direct-auto-jump")
         .description("Jumps when direct movement meets a solid obstacle.")
         .defaultValue(true)
-        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone)
+        .visible(() -> autoMove.get() && movementEngine.get() != MovementEngine.Baritone && movementEngine.get() != MovementEngine.Fly)
+        .build()
+    );
+
+    private final Setting<Integer> flyHeight = sgGeneral.add(new IntSetting.Builder()
+        .name("fly-height")
+        .description("Blocks above crop level used while flying. Two keeps an 11x11 work area within interaction range.")
+        .defaultValue(2)
+        .range(1, 2)
+        .sliderRange(1, 2)
+        .visible(() -> autoMove.get() && movementEngine.get() == MovementEngine.Fly)
         .build()
     );
 
@@ -194,6 +204,16 @@ public class AutoPlant extends Module {
         .name("auto-withdraw")
         .description("Uses /kho withdraw ITEM when the required crop is missing.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> withdrawAmount = sgWarehouse.add(new IntSetting.Builder()
+        .name("withdraw-amount")
+        .description("Amount of the priority seed to withdraw. Default is 320 (5 stacks); set to 0 to use /kho withdraw ITEM and take all.")
+        .defaultValue(320)
+        .range(0, 64000)
+        .sliderRange(0, 3200)
+        .visible(autoWithdraw::get)
         .build()
     );
 
@@ -496,6 +516,21 @@ public class AutoPlant extends Module {
         return pendingPositions.containsKey(pos) || plantProtection.containsKey(pos);
     }
 
+    /** Returns true when this module is currently preserving this planting item for the active crop pass. */
+    public boolean isPlantingItem(Item item) {
+        return isActive() && activeItem == item;
+    }
+
+    /**
+     * Returns true when an all-items warehouse withdrawal is currently feeding
+     * this crop. Auto Harvest may use the island-storage drop path to relieve
+     * an overflow in this one case; the priority seed is never moved to a
+     * chest.
+     */
+    public boolean isWithdrawingAllFor(Item item) {
+        return isActive() && warehouseManaged && autoWithdraw.get() && withdrawAmount.get() == 0 && activeItem == item;
+    }
+
     public void rememberHarvestedCrop(BlockPos pos, Item crop) {
         if (isSupportedSeed(crop)) rememberedCrops.put(pos.toImmutable(), crop);
     }
@@ -577,25 +612,32 @@ public class AutoPlant extends Module {
         movementTarget = workTarget.toImmutable();
 
         if (usesDirectMovement()) {
-            directMovementPoint = movementPoint;
+            directMovementPoint = getDirectMovementPoint(movementPoint);
             directMoving = true;
             updateDirectMovement();
             return;
         }
 
-        BlockState movementState = mc.world.getBlockState(movementPoint);
-        BlockPos pathTarget = movementState.isAir() ? movementPoint.down() : movementPoint;
-        PathManagers.get().moveTo(pathTarget);
+        // Use the same exact work point as direct movement. An adjacent-block
+        // goal can complete on the wrong side and leave the farmland out of
+        // placement range, causing the same goal to be requested forever.
+        PathManagers.get().moveToExact(movementPoint);
         pathingByModule = true;
     }
 
     private boolean usesDirectMovement() {
         return movementEngine.get() == MovementEngine.Direct
+            || movementEngine.get() == MovementEngine.Fly
             || movementEngine.get() == MovementEngine.Auto && PathManagers.get() instanceof NopPathManager;
     }
 
     private void updateDirectMovement() {
         if (!directMoving || directMovementPoint == null) return;
+
+        if (movementEngine.get() == MovementEngine.Fly) {
+            updateFlyMovement();
+            return;
+        }
 
         double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
         double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
@@ -609,12 +651,45 @@ public class AutoPlant extends Module {
         mc.options.jumpKey.setPressed(directAutoJump.get() && mc.player.horizontalCollision && mc.player.isOnGround());
     }
 
-    private void stopDirectMovement() {
-        if (!directMoving) return;
+    private void updateFlyMovement() {
+        if (!ensureFlying()) {
+            releaseMovementKeys();
+            return;
+        }
 
+        double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
+        double dy = directMovementPoint.getY() - mc.player.getY();
+        double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
+        float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
+
+        mc.player.setYaw(yaw);
+        mc.player.setHeadYaw(yaw);
+        mc.options.forwardKey.setPressed(dx * dx + dz * dz > 0.16);
+        mc.options.sprintKey.setPressed(directSprint.get());
+        mc.options.jumpKey.setPressed(dy > 0.3);
+        mc.options.sneakKey.setPressed(dy < -0.3);
+    }
+
+    private boolean ensureFlying() {
+        return FarmFlightController.ensureFlying(this);
+    }
+
+    private BlockPos getDirectMovementPoint(BlockPos movementPoint) {
+        return movementEngine.get() == MovementEngine.Fly ? movementPoint.up(flyHeight.get()) : movementPoint;
+    }
+
+    private void releaseMovementKeys() {
         mc.options.forwardKey.setPressed(false);
         mc.options.sprintKey.setPressed(false);
         mc.options.jumpKey.setPressed(false);
+        mc.options.sneakKey.setPressed(false);
+    }
+
+    private void stopDirectMovement() {
+        if (!directMoving) return;
+
+        releaseMovementKeys();
         directMoving = false;
         directMovementPoint = null;
     }
@@ -837,8 +912,11 @@ public class AutoPlant extends Module {
         if (withdrawCooldown > 0) return;
 
         String itemName = Registries.ITEM.getId(activeItem).getPath().toUpperCase(Locale.ROOT);
-        ChatUtils.sendPlayerMsg("/kho withdraw " + itemName, false);
-        info("Withdrawing " + itemName + " from /kho.");
+        int amount = withdrawAmount.get();
+        String command = "/kho withdraw " + itemName + (amount > 0 ? " " + amount : "");
+        ChatUtils.sendPlayerMsg(command, false);
+        if (amount > 0) info("Withdrawing %s %d from /kho.", itemName, amount);
+        else info("Withdrawing all %s from /kho.", itemName);
 
         warehouseManaged = true;
         waitingForWithdraw = true;
@@ -1001,7 +1079,8 @@ public class AutoPlant extends Module {
     public enum MovementEngine {
         Auto,
         Baritone,
-        Direct
+        Direct,
+        Fly
     }
 
     public enum FarmLayout {
