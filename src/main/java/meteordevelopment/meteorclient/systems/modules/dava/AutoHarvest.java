@@ -437,7 +437,7 @@ public class AutoHarvest extends Module {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (Vec3d.ofCenter(pos).squaredDistanceTo(mc.player.getX(), mc.player.getY(), mc.player.getZ()) > rangeSquared) continue;
                     BlockState state = mc.world.getBlockState(pos);
-                    if (!isTargetCoolingDown(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
+                    if (!isTargetCoolingDown(pos) && !isPlantPending(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
                 }
             }
         }
@@ -459,7 +459,7 @@ public class AutoHarvest extends Module {
 
             Runnable action = () -> {
                 BlockState state = mc.world.getBlockState(target);
-                if (isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
+                if (!isPlantPending(target) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
             };
             if (rotate.get()) Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target), action);
             else action.run();
@@ -564,7 +564,12 @@ public class AutoHarvest extends Module {
 
     private boolean isHarvestTarget(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
-        return !isTargetCoolingDown(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
+        return !isTargetCoolingDown(pos) && !isPlantPending(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
+    }
+
+    private boolean isPlantPending(BlockPos pos) {
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        return autoPlant != null && autoPlant.isActive() && autoPlant.isPlantPending(pos);
     }
 
     private boolean isTargetCoolingDown(BlockPos pos) {

@@ -49,7 +49,7 @@ import java.util.Map;
 
 public class AutoPlant extends Module {
     private static final int TICKS_PER_SECOND = 20;
-    private static final int PENDING_TICKS = 10;
+    private static final int PENDING_TICKS = 40;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgWarehouse = settings.createGroup("Warehouse");
@@ -303,7 +303,6 @@ public class AutoPlant extends Module {
         Item newCrop = getSeedForBlock(event.newState.getBlock());
         if (newCrop != null) {
             rememberedCrops.put(event.pos.toImmutable(), newCrop);
-            pendingPositions.remove(event.pos);
             return;
         }
 
@@ -405,7 +404,11 @@ public class AutoPlant extends Module {
     }
 
     public boolean isWorking() {
-        return activeItem != null || returningExtras || waitingForWithdraw || movementTarget != null || !targets.isEmpty();
+        return activeItem != null || returningExtras || waitingForWithdraw || movementTarget != null || !targets.isEmpty() || !pendingPositions.isEmpty();
+    }
+
+    public boolean isPlantPending(BlockPos pos) {
+        return pendingPositions.containsKey(pos);
     }
 
     private void handleMovement() {
@@ -720,7 +723,7 @@ public class AutoPlant extends Module {
         Iterator<Map.Entry<BlockPos, Integer>> iterator = pendingPositions.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<BlockPos, Integer> entry = iterator.next();
-            if (!mc.world.getBlockState(entry.getKey()).isAir() || entry.getValue() <= 1) iterator.remove();
+            if (entry.getValue() <= 1) iterator.remove();
             else entry.setValue(entry.getValue() - 1);
         }
     }
