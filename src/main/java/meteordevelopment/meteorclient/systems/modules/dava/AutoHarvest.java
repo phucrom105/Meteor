@@ -7,6 +7,7 @@ package meteordevelopment.meteorclient.systems.modules.dava;
 
 import meteordevelopment.meteorclient.events.entity.player.BlockBreakingCooldownEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.pathing.NopPathManager;
 import meteordevelopment.meteorclient.pathing.PathManagers;
@@ -38,13 +39,17 @@ import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class AutoHarvest extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -107,6 +112,15 @@ public class AutoHarvest extends Module {
         .defaultValue(5)
         .range(1, 10)
         .sliderRange(1, 10)
+        .build()
+    );
+
+    private final Setting<Integer> targetCooldown = sgGeneral.add(new IntSetting.Builder()
+        .name("target-cooldown")
+        .description("Ticks to ignore a crop after a break request, preventing repeated packets while the server updates and replants it.")
+        .defaultValue(30)
+        .range(5, 200)
+        .sliderRange(5, 100)
         .build()
     );
 
@@ -182,11 +196,11 @@ public class AutoHarvest extends Module {
     );
 
     private final Setting<Integer> moveScanDelay = sgMovement.add(new IntSetting.Builder()
-        .name("move-scan-delay")
-        .description("Ticks between searches for distant crops.")
-        .defaultValue(20)
-        .range(5, 100)
-        .sliderRange(5, 100)
+        .name("scan-delay")
+        .description("Ticks between fast searches for distant crops.")
+        .defaultValue(5)
+        .range(1, 40)
+        .sliderRange(1, 20)
         .build()
     );
 
@@ -249,6 +263,7 @@ public class AutoHarvest extends Module {
     );
 
     private final List<BlockPos> targets = new ArrayList<>();
+    private final Map<BlockPos, Integer> targetCooldowns = new HashMap<>();
 
     private Item activeCrop;
     private int cropIndex;
@@ -271,6 +286,7 @@ public class AutoHarvest extends Module {
     @Override
     public void onActivate() {
         targets.clear();
+        targetCooldowns.clear();
         cropIndex = 0;
         activeCrop = cropOrder.get().isEmpty() ? null : cropOrder.get().getFirst();
         emptyScans = 0;
@@ -291,6 +307,7 @@ public class AutoHarvest extends Module {
     public void onDeactivate() {
         stopPathing();
         targets.clear();
+        targetCooldowns.clear();
         activeCrop = null;
         depositingInventory = false;
     }
@@ -303,6 +320,8 @@ public class AutoHarvest extends Module {
     @EventHandler(priority = EventPriority.HIGHEST)
     private void onTick(TickEvent.Pre event) {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null) return;
+
+        tickTargetCooldowns();
 
         if (mc.currentScreen != null) {
             stopPathing();
@@ -358,6 +377,14 @@ public class AutoHarvest extends Module {
         event.cooldown = 0;
     }
 
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        if (targetCooldowns.containsKey(event.pos)) return;
+        if (isMatureCrop(event.oldState, activeCrop) && !isMatureCrop(event.newState, activeCrop)) {
+            targetCooldowns.put(event.pos.toImmutable(), targetCooldown.get());
+        }
+    }
+
     private boolean syncActiveCrop() {
         List<Item> order = cropOrder.get();
         if (order.isEmpty()) {
@@ -410,7 +437,7 @@ public class AutoHarvest extends Module {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (Vec3d.ofCenter(pos).squaredDistanceTo(mc.player.getX(), mc.player.getY(), mc.player.getZ()) > rangeSquared) continue;
                     BlockState state = mc.world.getBlockState(pos);
-                    if (isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
+                    if (!isTargetCoolingDown(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state)) targets.add(pos);
                 }
             }
         }
@@ -426,8 +453,14 @@ public class AutoHarvest extends Module {
         int harvested = 0;
         for (BlockPos target : targets) {
             if (harvested >= limit) break;
+            if (isTargetCoolingDown(target) || !isHarvestTarget(target)) continue;
 
-            Runnable action = () -> breakCrop(target);
+            targetCooldowns.put(target.toImmutable(), targetCooldown.get());
+
+            Runnable action = () -> {
+                BlockState state = mc.world.getBlockState(target);
+                if (isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
+            };
             if (rotate.get()) Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target), action);
             else action.run();
 
@@ -503,7 +536,9 @@ public class AutoHarvest extends Module {
     private BlockPos findNearestDistantTarget() {
         BlockPos playerPos = mc.player.getBlockPos();
         int horizontalRange = searchRange.get();
-        int verticalRange = Math.min(4, horizontalRange);
+        // Farm plots are level; keeping this narrow avoids scanning thousands of
+        // unrelated blocks every fast search while still covering the stair and water height.
+        int verticalRange = Math.min(2, horizontalRange);
         double bestDistance = Double.MAX_VALUE;
         BlockPos bestTarget = null;
 
@@ -529,7 +564,21 @@ public class AutoHarvest extends Module {
 
     private boolean isHarvestTarget(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
-        return isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
+        return !isTargetCoolingDown(pos) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(pos, state);
+    }
+
+    private boolean isTargetCoolingDown(BlockPos pos) {
+        return targetCooldowns.containsKey(pos);
+    }
+
+    private void tickTargetCooldowns() {
+        Iterator<Map.Entry<BlockPos, Integer>> iterator = targetCooldowns.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<BlockPos, Integer> entry = iterator.next();
+            int remaining = entry.getValue() - 1;
+            if (remaining <= 0) iterator.remove();
+            else entry.setValue(remaining);
+        }
     }
 
     private void moveToTarget(BlockPos workTarget) {
@@ -561,7 +610,8 @@ public class AutoHarvest extends Module {
 
         double dx = directMovementPoint.getX() + 0.5 - mc.player.getX();
         double dz = directMovementPoint.getZ() + 0.5 - mc.player.getZ();
-        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float desiredYaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float yaw = mc.player.getYaw() + MathHelper.clamp(MathHelper.wrapDegrees(desiredYaw - mc.player.getYaw()), -15, 15);
 
         mc.player.setYaw(yaw);
         mc.player.setHeadYaw(yaw);
