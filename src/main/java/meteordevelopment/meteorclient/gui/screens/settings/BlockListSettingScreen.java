@@ -12,6 +12,8 @@ import meteordevelopment.meteorclient.settings.BlockListSetting;
 import meteordevelopment.meteorclient.utils.misc.Names;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
+import net.minecraft.item.Item;
+import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 
@@ -36,15 +38,31 @@ public class BlockListSettingScreen extends CollectionListSettingScreen<Block> {
 
     @Override
     protected WWidget getValueWidget(Block value) {
-        return theme.itemWithLabel(value.asItem().getDefaultStack(), Names.get(value));
+        Item displayItem = getDisplayItem(value);
+        String displayName = displayItem == Items.AIR ? Names.get(value) : Names.get(displayItem);
+        return theme.itemWithLabel(displayItem.getDefaultStack(), displayName);
     }
 
     @Override
     protected String[] getValueNames(Block value) {
+        Item displayItem = getDisplayItem(value);
+
         return new String[]{
+            displayItem == Items.AIR ? Names.get(value) : Names.get(displayItem),
             Names.get(value),
             Registries.BLOCK.getId(value).toString()
         };
+    }
+
+    private Item getDisplayItem(Block block) {
+        if (block == Blocks.WHEAT) return Items.WHEAT_SEEDS;
+        if (block == Blocks.CARROTS) return Items.CARROT;
+        if (block == Blocks.POTATOES) return Items.POTATO;
+        if (block == Blocks.BEETROOTS) return Items.BEETROOT_SEEDS;
+        if (block == Blocks.PUMPKIN_STEM || block == Blocks.ATTACHED_PUMPKIN_STEM) return Items.PUMPKIN_SEEDS;
+        if (block == Blocks.MELON_STEM || block == Blocks.ATTACHED_MELON_STEM) return Items.MELON_SEEDS;
+
+        return block.asItem();
     }
 
     @Override

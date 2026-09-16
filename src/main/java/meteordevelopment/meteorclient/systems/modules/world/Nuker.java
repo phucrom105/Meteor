@@ -28,6 +28,9 @@ import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.CropBlock;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.util.Hand;
@@ -198,14 +201,16 @@ public class Nuker extends Module {
 
     private final Setting<List<Block>> blacklist = sgWhitelist.add(new BlockListSetting.Builder()
         .name("blacklist")
-        .description("The blocks you don't want to mine.")
+        .description("The blocks you don't want to mine. Selected crops are mined only when mature, while pumpkin and melon stems stay protected.")
+        .filter(Nuker::isSelectableBlock)
         .visible(() -> listMode.get() == ListMode.Blacklist)
         .build()
     );
 
     private final Setting<List<Block>> whitelist = sgWhitelist.add(new BlockListSetting.Builder()
         .name("whitelist")
-        .description("The blocks you want to mine.")
+        .description("The blocks you want to mine. Selected crops are mined only when mature; pumpkin and melon seeds target their fruit.")
+        .filter(Nuker::isSelectableBlock)
         .visible(() -> listMode.get() == ListMode.Whitelist)
         .build()
     );
@@ -431,8 +436,7 @@ public class Nuker extends Module {
             if (isOutOfRange(blockPos)) return;
 
             // Check whitelist or blacklist
-            if (listMode.get() == ListMode.Whitelist && !whitelist.get().contains(blockState.getBlock())) return;
-            if (listMode.get() == ListMode.Blacklist && blacklist.get().contains(blockState.getBlock())) return;
+            if (!shouldMine(blockState)) return;
 
             if (interact.get() && interacted.contains(blockPos)) return;
 
@@ -523,6 +527,54 @@ public class Nuker extends Module {
         return false;
     }
 
+    private boolean shouldMine(BlockState state) {
+        Block block = state.getBlock();
+        List<Block> selectedBlocks = listMode.get() == ListMode.Whitelist ? whitelist.get() : blacklist.get();
+
+        if (listMode.get() == ListMode.Whitelist) {
+            if (block instanceof CropBlock crop) {
+                return selectedBlocks.contains(block) && crop.isMature(state);
+            }
+
+            if (isPumpkinStem(block) || isMelonStem(block)) return false;
+            if (block == Blocks.PUMPKIN && containsPumpkinStem(selectedBlocks)) return true;
+            if (block == Blocks.MELON && containsMelonStem(selectedBlocks)) return true;
+
+            return selectedBlocks.contains(block);
+        }
+
+        if (block instanceof CropBlock crop && selectedBlocks.contains(block)) {
+            return crop.isMature(state);
+        }
+
+        if (isPumpkinStem(block) && containsPumpkinStem(selectedBlocks)) return false;
+        if (isMelonStem(block) && containsMelonStem(selectedBlocks)) return false;
+
+        return !selectedBlocks.contains(block);
+    }
+
+    private static boolean isSelectableBlock(Block block) {
+        return block != Blocks.AIR
+            && block != Blocks.ATTACHED_PUMPKIN_STEM
+            && block != Blocks.ATTACHED_MELON_STEM;
+    }
+
+    private static boolean isPumpkinStem(Block block) {
+        return block == Blocks.PUMPKIN_STEM || block == Blocks.ATTACHED_PUMPKIN_STEM;
+    }
+
+    private static boolean isMelonStem(Block block) {
+        return block == Blocks.MELON_STEM || block == Blocks.ATTACHED_MELON_STEM;
+    }
+
+    private static boolean containsPumpkinStem(List<Block> blocks) {
+        return blocks.contains(Blocks.PUMPKIN_STEM) || blocks.contains(Blocks.ATTACHED_PUMPKIN_STEM);
+    }
+
+    private static boolean containsMelonStem(List<Block> blocks) {
+        return blocks.contains(Blocks.MELON_STEM) || blocks.contains(Blocks.ATTACHED_MELON_STEM);
+    }
+
     private void addTargetedBlockToList() {
         if (!selectBlockBind.get().isPressed() || mc.currentScreen != null) return;
 
@@ -530,7 +582,7 @@ public class Nuker extends Module {
         if (hitResult == null || hitResult.getType() != HitResult.Type.BLOCK) return;
 
         BlockPos pos = ((BlockHitResult) hitResult).getBlockPos();
-        Block targetBlock = mc.world.getBlockState(pos).getBlock();
+        Block targetBlock = canonicalCropBlock(mc.world.getBlockState(pos).getBlock());
 
         List<Block> list = listMode.get() == ListMode.Whitelist ? whitelist.get() : blacklist.get();
         String modeName = listMode.get().name();
@@ -542,6 +594,12 @@ public class Nuker extends Module {
             list.add(targetBlock);
             info("Added " + Names.get(targetBlock) + " to " + modeName);
         }
+    }
+
+    private static Block canonicalCropBlock(Block block) {
+        if (block == Blocks.ATTACHED_PUMPKIN_STEM) return Blocks.PUMPKIN_STEM;
+        if (block == Blocks.ATTACHED_MELON_STEM) return Blocks.MELON_STEM;
+        return block;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
