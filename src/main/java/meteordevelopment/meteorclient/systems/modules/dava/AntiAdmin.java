@@ -5,6 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.dava;
 
+import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -21,6 +22,7 @@ import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerRemoveS2CPacket;
 import net.minecraft.scoreboard.Team;
 import net.minecraft.text.Text;
+import net.minecraft.util.Uuids;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -35,18 +37,25 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Suspends active modules while a configured admin is online or appears to be
  * vanished, then restores the modules when every tracked admin has left.
  */
 public class AntiAdmin extends Module {
+    private static final String ADMIN_RANK_GLYPH = "\uD800\uDFA0";
+    private static final String SERVER_JOIN_LEAVE_GLYPH = "\uD800\uDFF1";
+    private static final Pattern SERVER_JOIN_LEAVE_PATTERN = Pattern.compile("^\\s*" + Pattern.quote(SERVER_JOIN_LEAVE_GLYPH) + "\\s*([+-])([A-Za-z0-9_]{1,16})\\s*$");
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9_]{1,16}");
+
     private final SettingGroup sgDetection = settings.getDefaultGroup();
     private final SettingGroup sgResponse = settings.createGroup("Response");
 
     private final Setting<List<String>> adminRoles = sgDetection.add(new StringListSetting.Builder()
         .name("admin-roles")
-        .description("Roles shown in the tab list or scoreboard prefix that are treated as admins.")
+        .description("Role names shown in the tab list that are treated as admins. The admin name automatically matches this server's ADMIN badge.")
         .defaultValue("admin", "owner")
         .build()
     );
@@ -57,12 +66,21 @@ public class AntiAdmin extends Module {
         .build()
     );
 
-    private final Setting<Integer> logoutConfirmationTicks = sgDetection.add(new IntSetting.Builder()
-        .name("logout-confirmation-ticks")
-        .description("Ticks an admin must be absent from both the tab list and world before being assumed logged out. Fully hidden vanish cannot be distinguished from logout.")
-        .defaultValue(60)
-        .range(10, 400)
-        .sliderRange(10, 200)
+    private final Setting<Integer> vanishConfirmationTicks = sgDetection.add(new IntSetting.Builder()
+        .name("vanish-confirmation-ticks")
+        .description("Ticks an admin must be absent from both the tab list and world before being marked as vanished. Only an explicit logout notification releases the module lock.")
+        .defaultValue(20)
+        .range(1, 200)
+        .sliderRange(1, 100)
+        .build()
+    );
+
+    private final Setting<Integer> nearbyRange = sgDetection.add(new IntSetting.Builder()
+        .name("nearby-range")
+        .description("Distance used to warn that a visible or partially vanished admin is nearby. A fully vanished admin can only use their last known distance.")
+        .defaultValue(64)
+        .range(1, 256)
+        .sliderRange(16, 128)
         .build()
     );
 
@@ -93,6 +111,7 @@ public class AntiAdmin extends Module {
 
     @Override
     public void onActivate() {
+        removeLegacyAdminGlyphRole();
         activeAdmins.clear();
         pendingSignals.clear();
         suspendedModules.clear();
@@ -108,28 +127,44 @@ public class AntiAdmin extends Module {
 
     @Override
     public String getInfoString() {
-        return lockedDown ? "LOCKED " + activeAdmins.size() : null;
+        if (!lockedDown) return null;
+
+        long vanished = activeAdmins.values().stream().filter(admin -> admin.state == Presence.Vanished).count();
+        long nearby = activeAdmins.values().stream().filter(admin -> admin.state == Presence.Vanished && admin.isNearby(nearbyRange.get())).count();
+        if (nearby > 0) return "VANISHED NEAR " + nearby;
+        if (vanished > 0) return "VANISHED " + vanished;
+        return "LOCKED " + activeAdmins.size();
     }
 
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
-        if (event.packet instanceof PlayerListS2CPacket packet
-            && packet.getActions().contains(PlayerListS2CPacket.Action.ADD_PLAYER)) {
-            for (PlayerListS2CPacket.Entry entry : packet.getPlayerAdditionEntries()) {
-                if (entry.profile() == null) continue;
-                pendingSignals.add(new AdminListSignal(entry.profile().id(), entry.profile().name(), SignalType.Added));
+        if (event.packet instanceof PlayerListS2CPacket packet) {
+            boolean added = packet.getActions().contains(PlayerListS2CPacket.Action.ADD_PLAYER);
+            boolean displayNameUpdated = packet.getActions().contains(PlayerListS2CPacket.Action.UPDATE_DISPLAY_NAME);
+            if (!added && !displayNameUpdated) return;
+
+            for (PlayerListS2CPacket.Entry entry : packet.getEntries()) {
+                String name = entry.profile() != null ? entry.profile().name() : getKnownPlayerName(entry.profileId());
+                if (name.isBlank()) name = extractPlayerName(entry.displayName());
+
+                SignalType type = displayNameUpdated ? SignalType.RoleUpdated : SignalType.Added;
+                pendingSignals.add(new AdminListSignal(entry.profileId(), name, entry.displayName(), type));
             }
         } else if (event.packet instanceof PlayerRemoveS2CPacket packet) {
             for (UUID uuid : packet.profileIds()) {
-                String name = "";
-                if (mc.getNetworkHandler() != null) {
-                    PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(uuid);
-                    if (entry != null && entry.getProfile() != null) name = entry.getProfile().name();
-                }
-
-                pendingSignals.add(new AdminListSignal(uuid, name, SignalType.Removed));
+                pendingSignals.add(new AdminListSignal(uuid, getKnownPlayerName(uuid), null, SignalType.Removed));
             }
         }
+    }
+
+    @EventHandler
+    private void onMessageReceive(ReceiveMessageEvent event) {
+        Matcher matcher = SERVER_JOIN_LEAVE_PATTERN.matcher(event.getMessage().getString());
+        if (!matcher.matches()) return;
+
+        String name = matcher.group(2);
+        SignalType type = matcher.group(1).equals("+") ? SignalType.Joined : SignalType.Left;
+        pendingSignals.add(new AdminListSignal(Uuids.getOfflinePlayerUuid(name), name, null, type));
     }
 
     @EventHandler
@@ -154,8 +189,18 @@ public class AntiAdmin extends Module {
     private void processSignals() {
         AdminListSignal signal;
         while ((signal = pendingSignals.poll()) != null) {
+            if (signal.type() == SignalType.Left) {
+                UUID uuid = signal.uuid();
+                String name = signal.name();
+                activeAdmins.entrySet().removeIf(entry ->
+                    entry.getKey().equals(uuid) || entry.getValue().name.equalsIgnoreCase(name)
+                );
+                continue;
+            }
+
             boolean tracked = activeAdmins.containsKey(signal.uuid());
-            if (!tracked && !isConfiguredAdmin(signal.uuid(), signal.name())) continue;
+            boolean roleDetected = signal.displayName() != null && hasAdminRole(signal.name(), signal.displayName(), null);
+            if (!tracked && !isConfiguredAdmin(signal.uuid(), signal.name()) && !roleDetected) continue;
 
             AdminPresence presence = activeAdmins.get(signal.uuid());
             if (presence == null) {
@@ -165,7 +210,8 @@ public class AntiAdmin extends Module {
 
             if (!signal.name().isBlank()) presence.name = signal.name();
             presence.missingTicks = 0;
-            presence.state = signal.type() == SignalType.Added ? Presence.Online : Presence.Unknown;
+            if (signal.type() == SignalType.Removed) markVanished(presence);
+            else presence.state = Presence.Online;
         }
     }
 
@@ -180,7 +226,7 @@ public class AntiAdmin extends Module {
             if (!isConfiguredAdmin(uuid, name) && !hasAdminRole(entry)) continue;
 
             found.add(uuid);
-            markPresent(uuid, name, Presence.Online);
+            markPresent(uuid, name, Presence.Online, Double.NaN, false);
         }
 
         return found;
@@ -198,38 +244,74 @@ public class AntiAdmin extends Module {
 
             found.add(uuid);
             boolean vanished = player.isInvisible() || !tabAdmins.contains(uuid);
-            markPresent(uuid, name, vanished ? Presence.Vanished : Presence.Online);
+            double distance = mc.player.distanceTo(player);
+            markPresent(uuid, name, vanished ? Presence.Vanished : Presence.Online, distance, true);
         }
 
         return found;
     }
 
     private void expireMissingAdmins(Set<UUID> tabAdmins, Set<UUID> worldAdmins) {
-        activeAdmins.entrySet().removeIf(entry -> {
+        for (Map.Entry<UUID, AdminPresence> entry : activeAdmins.entrySet()) {
             if (tabAdmins.contains(entry.getKey()) || worldAdmins.contains(entry.getKey())) {
                 entry.getValue().missingTicks = 0;
-                return false;
+                continue;
             }
 
             entry.getValue().missingTicks++;
-            return entry.getValue().missingTicks >= logoutConfirmationTicks.get();
-        });
+            if (entry.getValue().missingTicks >= vanishConfirmationTicks.get()) markVanished(entry.getValue());
+        }
     }
 
-    private void markPresent(UUID uuid, String name, Presence state) {
+    private void markPresent(UUID uuid, String name, Presence state, double distance, boolean worldEvidence) {
         AdminPresence presence = activeAdmins.get(uuid);
-        boolean becameVanished = presence != null && presence.state != Presence.Vanished && state == Presence.Vanished;
 
         if (presence == null) {
             presence = new AdminPresence(name, state);
             activeAdmins.put(uuid, presence);
         } else {
             if (!name.isBlank()) presence.name = name;
-            presence.state = state;
             presence.missingTicks = 0;
         }
 
-        if (becameVanished && lockedDown) warning("Admin %s may be vanished; keeping modules disabled.", presence.name);
+        boolean wasNearby = presence.isNearby(nearbyRange.get());
+        if (Double.isFinite(distance)) presence.lastDistance = distance;
+
+        if (state == Presence.Vanished) {
+            boolean firstVanishWarning = !presence.vanishNotified;
+            presence.state = Presence.Vanished;
+
+            if (firstVanishWarning) {
+                presence.vanishNotified = true;
+                warnVanished(presence);
+            } else if (!wasNearby && presence.isNearby(nearbyRange.get())) {
+                warning("Admin %s is still vanished and is now nearby (%.1f blocks). Modules remain disabled.", presence.name, presence.lastDistance);
+            }
+        } else {
+            presence.state = Presence.Online;
+
+            // Tab-list evidence alone is not enough to clear a vanish warning:
+            // an invisible entity can still be listed. A visible world entity is.
+            if (worldEvidence) presence.vanishNotified = false;
+        }
+    }
+
+    private void markVanished(AdminPresence presence) {
+        presence.state = Presence.Vanished;
+        if (presence.vanishNotified) return;
+
+        presence.vanishNotified = true;
+        warnVanished(presence);
+    }
+
+    private void warnVanished(AdminPresence presence) {
+        if (!Double.isFinite(presence.lastDistance)) {
+            warning("Admin %s VANISHED; distance is unknown. Modules remain disabled until the logout notification.", presence.name);
+        } else if (presence.isNearby(nearbyRange.get())) {
+            warning("Admin %s VANISHED nearby (last known distance: %.1f blocks). Modules remain disabled until logout.", presence.name, presence.lastDistance);
+        } else {
+            warning("Admin %s VANISHED (last known distance: %.1f blocks). Modules remain disabled until logout.", presence.name, presence.lastDistance);
+        }
     }
 
     private void suspendModules() {
@@ -245,7 +327,7 @@ public class AntiAdmin extends Module {
             disabled++;
         }
 
-        warning("Admin detected (%s). Disabled %d module%s.", adminNames(), disabled, disabled == 1 ? "" : "s");
+        warning("Admin detected (%s). Disabled %d module%s; they will be restored only after a confirmed logout.", adminNames(), disabled, disabled == 1 ? "" : "s");
     }
 
     private void enforceLockdown() {
@@ -273,7 +355,7 @@ public class AntiAdmin extends Module {
         }
 
         if (adminLoggedOut) {
-            info("All monitored admins logged out. Restored %d module%s.", restored, restored == 1 ? "" : "s");
+            info("All monitored admins confirmed logged out. Restored %d module%s.", restored, restored == 1 ? "" : "s");
         }
     }
 
@@ -293,27 +375,61 @@ public class AntiAdmin extends Module {
         return false;
     }
 
+    private String getKnownPlayerName(UUID uuid) {
+        if (mc.getNetworkHandler() == null) return "";
+
+        PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(uuid);
+        return entry == null || entry.getProfile() == null ? "" : entry.getProfile().name();
+    }
+
+    private static String extractPlayerName(Text displayName) {
+        if (displayName == null) return "";
+
+        Matcher matcher = USERNAME_PATTERN.matcher(displayName.getString());
+        String name = "";
+        while (matcher.find()) name = matcher.group();
+        return name;
+    }
+
     private boolean hasAdminRole(PlayerListEntry entry) {
-        StringBuilder decorations = new StringBuilder();
-        appendText(decorations, entry.getDisplayName());
-        appendTeamDecorations(decorations, entry.getProfile().name());
-        return containsConfiguredRole(decorations.toString(), entry.getProfile().name());
+        String playerName = entry.getProfile().name();
+        Team team = entry.getScoreboardTeam();
+
+        // PlayerListEntry#getScoreboardTeam is the same team source used by the
+        // vanilla tab list. The world scoreboard is kept as a fallback because
+        // some servers send the team packet separately from the player list.
+        if (team == null) team = getScoreboardTeam(playerName);
+
+        return hasAdminRole(playerName, entry.getDisplayName(), team);
     }
 
     private boolean hasAdminRole(PlayerEntity player) {
         String name = player.getGameProfile().name();
-        StringBuilder decorations = new StringBuilder();
-        appendText(decorations, player.getDisplayName());
-        appendTeamDecorations(decorations, name);
-        return containsConfiguredRole(decorations.toString(), name);
+        Team team = player.getScoreboardTeam();
+        if (team == null) team = getScoreboardTeam(name);
+
+        return hasAdminRole(name, player.getDisplayName(), team);
     }
 
-    private void appendTeamDecorations(StringBuilder decorations, String playerName) {
-        Team team = mc.world.getScoreboard().getScoreHolderTeam(playerName);
-        if (team == null) return;
+    private boolean hasAdminRole(String playerName, Text displayName, Team team) {
+        StringBuilder decorations = new StringBuilder();
+        appendText(decorations, displayName);
 
-        appendText(decorations, team.getPrefix());
-        appendText(decorations, team.getSuffix());
+        if (team != null) {
+            appendText(decorations, team.getPrefix());
+            appendText(decorations, team.getSuffix());
+
+            // A few permission/tab-list plugins use the team name rather than
+            // the visible prefix to carry the rank.
+            appendText(decorations, Text.literal(team.getName()));
+        }
+
+        return containsConfiguredRole(decorations.toString(), playerName);
+    }
+
+    private Team getScoreboardTeam(String playerName) {
+        if (mc.world == null || mc.world.getScoreboard() == null) return null;
+        return mc.world.getScoreboard().getScoreHolderTeam(playerName);
     }
 
     private boolean containsConfiguredRole(String decorations, String playerName) {
@@ -328,10 +444,19 @@ public class AntiAdmin extends Module {
 
         for (String configuredRole : adminRoles.get()) {
             String role = normalize(configuredRole);
+            if (role.equals("ADMIN") && decorations.contains(ADMIN_RANK_GLYPH)) return true;
             if (!role.isEmpty() && containsWholeRole(normalized, role)) return true;
         }
 
         return false;
+    }
+
+    private void removeLegacyAdminGlyphRole() {
+        if (!adminRoles.get().contains(ADMIN_RANK_GLYPH)) return;
+
+        List<String> roles = new ArrayList<>(adminRoles.get());
+        roles.removeIf(ADMIN_RANK_GLYPH::equals);
+        adminRoles.set(roles);
     }
 
     private static boolean containsWholeRole(String text, String role) {
@@ -370,7 +495,9 @@ public class AntiAdmin extends Module {
     }
 
     private static String displayName(AdminListSignal signal) {
-        return signal.name().isBlank() ? signal.uuid().toString() : signal.name();
+        if (!signal.name().isBlank()) return signal.name();
+        if (signal.displayName() != null && !signal.displayName().getString().isBlank()) return signal.displayName().getString();
+        return signal.uuid().toString();
     }
 
     private enum Presence {
@@ -381,19 +508,28 @@ public class AntiAdmin extends Module {
 
     private enum SignalType {
         Added,
-        Removed
+        RoleUpdated,
+        Joined,
+        Removed,
+        Left
     }
 
     private static class AdminPresence {
         private String name;
         private Presence state;
         private int missingTicks;
+        private double lastDistance = Double.NaN;
+        private boolean vanishNotified;
 
         private AdminPresence(String name, Presence state) {
             this.name = name;
             this.state = state;
         }
+
+        private boolean isNearby(double range) {
+            return Double.isFinite(lastDistance) && lastDistance <= range;
+        }
     }
 
-    private record AdminListSignal(UUID uuid, String name, SignalType type) {}
+    private record AdminListSignal(UUID uuid, String name, Text displayName, SignalType type) {}
 }
