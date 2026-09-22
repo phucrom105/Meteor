@@ -5,9 +5,15 @@
 
 package meteordevelopment.meteorclient.systems.modules.dava;
 
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -21,6 +27,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerRemoveS2CPacket;
 import net.minecraft.scoreboard.Team;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Uuids;
 
@@ -30,6 +37,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,6 +55,7 @@ import java.util.regex.Pattern;
 public class AntiAdmin extends Module {
     private static final String ADMIN_RANK_GLYPH = "\uD800\uDFA0";
     private static final String SERVER_JOIN_LEAVE_GLYPH = "\uD800\uDFF1";
+    private static final int ADMIN_JOIN_COLOR = 0xFF55FF;
     private static final Pattern SERVER_JOIN_LEAVE_PATTERN = Pattern.compile("^\\s*" + Pattern.quote(SERVER_JOIN_LEAVE_GLYPH) + "\\s*([+-])([A-Za-z0-9_]{1,16})\\s*$");
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9_]{1,16}");
 
@@ -55,7 +64,7 @@ public class AntiAdmin extends Module {
 
     private final Setting<List<String>> adminRoles = sgDetection.add(new StringListSetting.Builder()
         .name("admin-roles")
-        .description("Role names shown in the tab list that are treated as admins. The admin name automatically matches this server's ADMIN badge.")
+        .description("Role names shown in the tab list that are treated as admins. ADMIN also matches this server's badge and purple join name.")
         .defaultValue("admin", "owner")
         .build()
     );
@@ -102,11 +111,26 @@ public class AntiAdmin extends Module {
     private final Map<UUID, AdminPresence> activeAdmins = new HashMap<>();
     private final Queue<AdminListSignal> pendingSignals = new ConcurrentLinkedQueue<>();
     private final Set<Module> suspendedModules = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<UUID> confirmedLoggedOutIds = new HashSet<>();
+    private final Set<String> confirmedLoggedOutNames = new HashSet<>();
+    private final Set<String> observedPlayerNames = new HashSet<>();
+    private final Map<String, AdminStatus> adminStatuses = new LinkedHashMap<>();
 
     private boolean lockedDown;
+    private boolean observationReady;
 
     public AntiAdmin() {
         super(Categories.Dava, "anti-admin", "Suspends active modules while an admin role is online or vanished.");
+    }
+
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        WButton showStatus = list.add(theme.button("Show Admin Status")).expandX().widget();
+        WTable statusTable = list.add(theme.table()).expandX().widget();
+
+        showStatus.action = () -> fillAdminStatusTable(theme, statusTable);
+        return list;
     }
 
     @Override
@@ -115,14 +139,36 @@ public class AntiAdmin extends Module {
         activeAdmins.clear();
         pendingSignals.clear();
         suspendedModules.clear();
+        confirmedLoggedOutIds.clear();
+        confirmedLoggedOutNames.clear();
+        observedPlayerNames.clear();
+        adminStatuses.clear();
         lockedDown = false;
+        observationReady = false;
     }
 
     @Override
     public void onDeactivate() {
         activeAdmins.clear();
         pendingSignals.clear();
+        confirmedLoggedOutIds.clear();
+        confirmedLoggedOutNames.clear();
+        observedPlayerNames.clear();
+        adminStatuses.clear();
+        observationReady = false;
         restoreModules(false);
+    }
+
+    @EventHandler
+    private void onGameJoin(GameJoinedEvent event) {
+        restoreModules(false);
+        activeAdmins.clear();
+        pendingSignals.clear();
+        confirmedLoggedOutIds.clear();
+        confirmedLoggedOutNames.clear();
+        observedPlayerNames.clear();
+        adminStatuses.clear();
+        observationReady = false;
     }
 
     @Override
@@ -148,11 +194,11 @@ public class AntiAdmin extends Module {
                 if (name.isBlank()) name = extractPlayerName(entry.displayName());
 
                 SignalType type = displayNameUpdated ? SignalType.RoleUpdated : SignalType.Added;
-                pendingSignals.add(new AdminListSignal(entry.profileId(), name, entry.displayName(), type));
+                pendingSignals.add(new AdminListSignal(entry.profileId(), name, entry.displayName(), type, false));
             }
         } else if (event.packet instanceof PlayerRemoveS2CPacket packet) {
             for (UUID uuid : packet.profileIds()) {
-                pendingSignals.add(new AdminListSignal(uuid, getKnownPlayerName(uuid), null, SignalType.Removed));
+                pendingSignals.add(new AdminListSignal(uuid, getKnownPlayerName(uuid), null, SignalType.Removed, false));
             }
         }
     }
@@ -164,12 +210,21 @@ public class AntiAdmin extends Module {
 
         String name = matcher.group(2);
         SignalType type = matcher.group(1).equals("+") ? SignalType.Joined : SignalType.Left;
-        pendingSignals.add(new AdminListSignal(Uuids.getOfflinePlayerUuid(name), name, null, type));
+        boolean adminRoleHint = hasAdminRole(name, event.getMessage(), null)
+            || type == SignalType.Joined
+                && isRoleConfigured("ADMIN")
+                && hasAdminJoinColor(event.getMessage(), matcher.start(2), matcher.end(2));
+        pendingSignals.add(new AdminListSignal(Uuids.getOfflinePlayerUuid(name), name, null, type, adminRoleHint));
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null || mc.getNetworkHandler() == null) return;
+
+        if (!observationReady) {
+            observeCurrentPlayers();
+            observationReady = true;
+        }
 
         processSignals();
 
@@ -187,31 +242,61 @@ public class AntiAdmin extends Module {
     }
 
     private void processSignals() {
+        List<AdminListSignal> signals = new ArrayList<>();
         AdminListSignal signal;
-        while ((signal = pendingSignals.poll()) != null) {
+        while ((signal = pendingSignals.poll()) != null) signals.add(signal);
+
+        // Non-logout signals prove that a player was visible to this client.
+        // Record them before processing logout chat so packet/chat ordering
+        // cannot make a normal player look like a previously vanished admin.
+        for (AdminListSignal queued : signals) {
+            if (queued.type() != SignalType.Left) rememberObservedPlayer(queued.name());
+        }
+
+        for (AdminListSignal queued : signals) {
+            signal = queued;
             if (signal.type() == SignalType.Left) {
-                UUID uuid = signal.uuid();
-                String name = signal.name();
-                activeAdmins.entrySet().removeIf(entry ->
-                    entry.getKey().equals(uuid) || entry.getValue().name.equalsIgnoreCase(name)
-                );
+                boolean tracked = findActiveAdmin(signal.uuid(), signal.name()) != null;
+                boolean configured = isConfiguredAdmin(signal.uuid(), signal.name());
+                boolean hiddenLogout = observationReady && !wasPlayerObserved(signal.name());
+
+                if (tracked || configured || signal.adminRoleHint() || hiddenLogout) {
+                    confirmLogout(signal.uuid(), signal.name());
+                    if (hiddenLogout && !tracked && !configured) {
+                        info("Previously unseen player %s logged out; detected as an admin who was already vanished when you joined.", signal.name());
+                    }
+                }
                 continue;
             }
 
-            boolean tracked = activeAdmins.containsKey(signal.uuid());
-            boolean roleDetected = signal.displayName() != null && hasAdminRole(signal.name(), signal.displayName(), null);
+            if (signal.type() == SignalType.Joined || signal.type() == SignalType.Added) {
+                clearConfirmedLogout(signal.uuid(), signal.name());
+            } else if (signal.type() == SignalType.Removed && isConfirmedLoggedOut(signal.uuid(), signal.name())) {
+                continue;
+            }
+
+            Map.Entry<UUID, AdminPresence> trackedEntry = findActiveAdmin(signal.uuid(), signal.name());
+            boolean tracked = trackedEntry != null;
+            boolean roleDetected = signal.adminRoleHint()
+                || signal.displayName() != null && hasAdminRole(signal.name(), signal.displayName(), null);
             if (!tracked && !isConfiguredAdmin(signal.uuid(), signal.name()) && !roleDetected) continue;
 
-            AdminPresence presence = activeAdmins.get(signal.uuid());
+            AdminPresence presence = tracked ? trackedEntry.getValue() : null;
             if (presence == null) {
                 presence = new AdminPresence(displayName(signal), Presence.Unknown);
+                activeAdmins.put(signal.uuid(), presence);
+            } else if (!trackedEntry.getKey().equals(signal.uuid()) && signal.type() != SignalType.Joined) {
+                activeAdmins.remove(trackedEntry.getKey());
                 activeAdmins.put(signal.uuid(), presence);
             }
 
             if (!signal.name().isBlank()) presence.name = signal.name();
             presence.missingTicks = 0;
             if (signal.type() == SignalType.Removed) markVanished(presence);
-            else presence.state = Presence.Online;
+            else {
+                presence.state = Presence.Online;
+                rememberAdminStatus(presence.name, Presence.Online);
+            }
         }
     }
 
@@ -223,7 +308,9 @@ public class AntiAdmin extends Module {
 
             UUID uuid = entry.getProfile().id();
             String name = entry.getProfile().name();
-            if (!isConfiguredAdmin(uuid, name) && !hasAdminRole(entry)) continue;
+            rememberObservedPlayer(name);
+            if (isConfirmedLoggedOut(uuid, name)) continue;
+            if (findActiveAdmin(uuid, name) == null && !isConfiguredAdmin(uuid, name) && !hasAdminRole(entry)) continue;
 
             found.add(uuid);
             markPresent(uuid, name, Presence.Online, Double.NaN, false);
@@ -240,7 +327,9 @@ public class AntiAdmin extends Module {
 
             UUID uuid = player.getUuid();
             String name = player.getGameProfile().name();
-            if (!activeAdmins.containsKey(uuid) && !isConfiguredAdmin(uuid, name) && !hasAdminRole(player)) continue;
+            rememberObservedPlayer(name);
+            if (isConfirmedLoggedOut(uuid, name)) continue;
+            if (findActiveAdmin(uuid, name) == null && !isConfiguredAdmin(uuid, name) && !hasAdminRole(player)) continue;
 
             found.add(uuid);
             boolean vanished = player.isInvisible() || !tabAdmins.contains(uuid);
@@ -264,12 +353,17 @@ public class AntiAdmin extends Module {
     }
 
     private void markPresent(UUID uuid, String name, Presence state, double distance, boolean worldEvidence) {
-        AdminPresence presence = activeAdmins.get(uuid);
+        Map.Entry<UUID, AdminPresence> trackedEntry = findActiveAdmin(uuid, name);
+        AdminPresence presence = trackedEntry == null ? null : trackedEntry.getValue();
 
         if (presence == null) {
             presence = new AdminPresence(name, state);
             activeAdmins.put(uuid, presence);
         } else {
+            if (!trackedEntry.getKey().equals(uuid)) {
+                activeAdmins.remove(trackedEntry.getKey());
+                activeAdmins.put(uuid, presence);
+            }
             if (!name.isBlank()) presence.name = name;
             presence.missingTicks = 0;
         }
@@ -294,10 +388,13 @@ public class AntiAdmin extends Module {
             // an invisible entity can still be listed. A visible world entity is.
             if (worldEvidence) presence.vanishNotified = false;
         }
+
+        rememberAdminStatus(presence.name, presence.state);
     }
 
     private void markVanished(AdminPresence presence) {
         presence.state = Presence.Vanished;
+        rememberAdminStatus(presence.name, Presence.Vanished);
         if (presence.vanishNotified) return;
 
         presence.vanishNotified = true;
@@ -375,6 +472,120 @@ public class AntiAdmin extends Module {
         return false;
     }
 
+    private Map.Entry<UUID, AdminPresence> findActiveAdmin(UUID uuid, String name) {
+        AdminPresence byUuid = activeAdmins.get(uuid);
+        if (byUuid != null) return Map.entry(uuid, byUuid);
+        if (name == null || name.isBlank()) return null;
+
+        for (Map.Entry<UUID, AdminPresence> entry : activeAdmins.entrySet()) {
+            if (entry.getValue().name.equalsIgnoreCase(name)) return entry;
+        }
+
+        return null;
+    }
+
+    private void confirmLogout(UUID uuid, String name) {
+        confirmedLoggedOutIds.add(uuid);
+        if (name != null && !name.isBlank()) confirmedLoggedOutNames.add(normalizeName(name));
+
+        Set<String> loggedOutNames = new HashSet<>();
+        if (name != null && !name.isBlank()) loggedOutNames.add(name);
+        activeAdmins.entrySet().removeIf(entry -> {
+            boolean matches = entry.getKey().equals(uuid)
+                || name != null && entry.getValue().name.equalsIgnoreCase(name);
+            if (matches) {
+                confirmedLoggedOutIds.add(entry.getKey());
+                loggedOutNames.add(entry.getValue().name);
+            }
+            return matches;
+        });
+
+        for (String loggedOutName : loggedOutNames) {
+            rememberAdminStatus(loggedOutName, Presence.LoggedOut);
+        }
+    }
+
+    private void clearConfirmedLogout(UUID uuid, String name) {
+        confirmedLoggedOutIds.remove(uuid);
+        if (name != null && !name.isBlank()) confirmedLoggedOutNames.remove(normalizeName(name));
+    }
+
+    private boolean isConfirmedLoggedOut(UUID uuid, String name) {
+        return confirmedLoggedOutIds.contains(uuid)
+            || name != null && !name.isBlank() && confirmedLoggedOutNames.contains(normalizeName(name));
+    }
+
+    private static String normalizeName(String name) {
+        return name.toLowerCase(Locale.ROOT);
+    }
+
+    private void observeCurrentPlayers() {
+        for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
+            if (entry.getProfile() != null) rememberObservedPlayer(entry.getProfile().name());
+        }
+
+        for (PlayerEntity player : mc.world.getPlayers()) {
+            rememberObservedPlayer(player.getGameProfile().name());
+        }
+    }
+
+    private void rememberObservedPlayer(String name) {
+        if (name != null && !name.isBlank()) observedPlayerNames.add(normalizeName(name));
+    }
+
+    private boolean wasPlayerObserved(String name) {
+        return name == null || name.isBlank() || observedPlayerNames.contains(normalizeName(name));
+    }
+
+    private void rememberAdminStatus(String name, Presence state) {
+        if (name == null || name.isBlank() || state == Presence.Unknown) return;
+        adminStatuses.put(normalizeName(name), new AdminStatus(name, state));
+    }
+
+    private void fillAdminStatusTable(GuiTheme theme, WTable table) {
+        table.clear();
+        List<AdminStatus> statuses = new ArrayList<>(adminStatuses.values());
+
+        for (String configured : admins.get()) {
+            if (configured == null) continue;
+
+            String name = configured.trim();
+            if (name.isEmpty() || hasStatusForConfiguredAdmin(name)) continue;
+            statuses.add(new AdminStatus(name, Presence.Unknown));
+        }
+
+        statuses.sort((left, right) -> left.name().compareToIgnoreCase(right.name()));
+        if (statuses.isEmpty()) {
+            table.add(theme.label("No admin information detected yet."));
+            return;
+        }
+
+        for (AdminStatus status : statuses) {
+            table.add(theme.label(status.name() + ": " + statusText(status.state())));
+            table.row();
+        }
+    }
+
+    private boolean hasStatusForConfiguredAdmin(String value) {
+        if (adminStatuses.containsKey(normalizeName(value))) return true;
+
+        try {
+            UUID uuid = UUID.fromString(value);
+            return activeAdmins.containsKey(uuid) || confirmedLoggedOutIds.contains(uuid);
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    private static String statusText(Presence state) {
+        return switch (state) {
+            case Online -> "LOGGED IN";
+            case Vanished -> "VANISHED";
+            case LoggedOut -> "LOGGED OUT";
+            case Unknown -> "UNKNOWN";
+        };
+    }
+
     private String getKnownPlayerName(UUID uuid) {
         if (mc.getNetworkHandler() == null) return "";
 
@@ -427,6 +638,27 @@ public class AntiAdmin extends Module {
         return containsConfiguredRole(decorations.toString(), playerName);
     }
 
+    private static boolean hasAdminJoinColor(Text message, int nameStart, int nameEnd) {
+        int[] cursor = { 0 };
+        int[] coloredNameCharacters = { 0 };
+
+        message.visit((style, string) -> {
+            int partStart = cursor[0];
+            int partEnd = partStart + string.length();
+            int overlapStart = Math.max(partStart, nameStart);
+            int overlapEnd = Math.min(partEnd, nameEnd);
+
+            if (overlapStart < overlapEnd && style.getColor() != null && style.getColor().getRgb() == ADMIN_JOIN_COLOR) {
+                coloredNameCharacters[0] += overlapEnd - overlapStart;
+            }
+
+            cursor[0] = partEnd;
+            return java.util.Optional.empty();
+        }, Style.EMPTY);
+
+        return coloredNameCharacters[0] == nameEnd - nameStart;
+    }
+
     private Team getScoreboardTeam(String playerName) {
         if (mc.world == null || mc.world.getScoreboard() == null) return null;
         return mc.world.getScoreboard().getScoreHolderTeam(playerName);
@@ -449,6 +681,11 @@ public class AntiAdmin extends Module {
         }
 
         return false;
+    }
+
+    private boolean isRoleConfigured(String roleName) {
+        String expected = normalize(roleName);
+        return adminRoles.get().stream().anyMatch(role -> normalize(role).equals(expected));
     }
 
     private void removeLegacyAdminGlyphRole() {
@@ -503,6 +740,7 @@ public class AntiAdmin extends Module {
     private enum Presence {
         Online,
         Vanished,
+        LoggedOut,
         Unknown
     }
 
@@ -531,5 +769,7 @@ public class AntiAdmin extends Module {
         }
     }
 
-    private record AdminListSignal(UUID uuid, String name, Text displayName, SignalType type) {}
+    private record AdminListSignal(UUID uuid, String name, Text displayName, SignalType type, boolean adminRoleHint) {}
+
+    private record AdminStatus(String name, Presence state) {}
 }
