@@ -56,7 +56,8 @@ public class AntiAdmin extends Module {
     private static final String ADMIN_RANK_GLYPH = "\uD800\uDFA0";
     private static final String SERVER_JOIN_LEAVE_GLYPH = "\uD800\uDFF1";
     private static final int ADMIN_JOIN_COLOR = 0xFF55FF;
-    private static final Pattern SERVER_JOIN_LEAVE_PATTERN = Pattern.compile("^\\s*" + Pattern.quote(SERVER_JOIN_LEAVE_GLYPH) + "\\s*([+-])([A-Za-z0-9_]{1,16})\\s*$");
+    private static final String SERVER_SPACING = "[\\s\\p{Z}]*";
+    private static final Pattern SERVER_JOIN_LEAVE_PATTERN = Pattern.compile("^" + SERVER_SPACING + Pattern.quote(SERVER_JOIN_LEAVE_GLYPH) + SERVER_SPACING + "([+-])" + SERVER_SPACING + "([A-Za-z0-9_]{1,16})" + SERVER_SPACING + "$");
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9_]{1,16}");
 
     private final SettingGroup sgDetection = settings.getDefaultGroup();
@@ -77,7 +78,7 @@ public class AntiAdmin extends Module {
 
     private final Setting<Integer> vanishConfirmationTicks = sgDetection.add(new IntSetting.Builder()
         .name("vanish-confirmation-ticks")
-        .description("Ticks an admin must be absent from both the tab list and world before being marked as vanished. Only an explicit logout notification releases the module lock.")
+        .description("Grace period after an admin disappears from the tab list or world before marking them vanished, allowing the server logout notification to arrive.")
         .defaultValue(20)
         .range(1, 200)
         .sliderRange(1, 100)
@@ -292,8 +293,17 @@ public class AntiAdmin extends Module {
 
             if (!signal.name().isBlank()) presence.name = signal.name();
             presence.missingTicks = 0;
-            if (signal.type() == SignalType.Removed) markVanished(presence);
-            else {
+            if (signal.type() == SignalType.Removed) {
+                // A normal logout removes the player from the tab list before the
+                // server chat notification can reach us. Keep the lockdown, but
+                // wait before calling it a vanish so that notification can win.
+                if (presence.state != Presence.Vanished) {
+                    presence.awaitingVanishConfirmation = true;
+                    presence.vanishCandidateTicks = 0;
+                }
+            } else {
+                presence.awaitingVanishConfirmation = false;
+                presence.vanishCandidateTicks = 0;
                 presence.state = Presence.Online;
                 rememberAdminStatus(presence.name, Presence.Online);
             }
@@ -329,10 +339,12 @@ public class AntiAdmin extends Module {
             String name = player.getGameProfile().name();
             rememberObservedPlayer(name);
             if (isConfirmedLoggedOut(uuid, name)) continue;
-            if (findActiveAdmin(uuid, name) == null && !isConfiguredAdmin(uuid, name) && !hasAdminRole(player)) continue;
+            Map.Entry<UUID, AdminPresence> trackedEntry = findActiveAdmin(uuid, name);
+            if (trackedEntry == null && !isConfiguredAdmin(uuid, name) && !hasAdminRole(player)) continue;
 
             found.add(uuid);
             boolean vanished = player.isInvisible() || !tabAdmins.contains(uuid);
+            if (trackedEntry != null && trackedEntry.getValue().awaitingVanishConfirmation) vanished = false;
             double distance = mc.player.distanceTo(player);
             markPresent(uuid, name, vanished ? Presence.Vanished : Presence.Online, distance, true);
         }
@@ -342,13 +354,28 @@ public class AntiAdmin extends Module {
 
     private void expireMissingAdmins(Set<UUID> tabAdmins, Set<UUID> worldAdmins) {
         for (Map.Entry<UUID, AdminPresence> entry : activeAdmins.entrySet()) {
-            if (tabAdmins.contains(entry.getKey()) || worldAdmins.contains(entry.getKey())) {
-                entry.getValue().missingTicks = 0;
+            AdminPresence presence = entry.getValue();
+
+            if (tabAdmins.contains(entry.getKey())) {
+                presence.missingTicks = 0;
+                presence.awaitingVanishConfirmation = false;
+                presence.vanishCandidateTicks = 0;
                 continue;
             }
 
-            entry.getValue().missingTicks++;
-            if (entry.getValue().missingTicks >= vanishConfirmationTicks.get()) markVanished(entry.getValue());
+            if (presence.awaitingVanishConfirmation) {
+                presence.vanishCandidateTicks++;
+                if (presence.vanishCandidateTicks >= vanishConfirmationTicks.get()) markVanished(presence);
+                continue;
+            }
+
+            if (worldAdmins.contains(entry.getKey())) {
+                presence.missingTicks = 0;
+                continue;
+            }
+
+            presence.missingTicks++;
+            if (presence.missingTicks >= vanishConfirmationTicks.get()) markVanished(presence);
         }
     }
 
@@ -366,6 +393,11 @@ public class AntiAdmin extends Module {
             }
             if (!name.isBlank()) presence.name = name;
             presence.missingTicks = 0;
+        }
+
+        if (!worldEvidence) {
+            presence.awaitingVanishConfirmation = false;
+            presence.vanishCandidateTicks = 0;
         }
 
         boolean wasNearby = presence.isNearby(nearbyRange.get());
@@ -393,6 +425,8 @@ public class AntiAdmin extends Module {
     }
 
     private void markVanished(AdminPresence presence) {
+        presence.awaitingVanishConfirmation = false;
+        presence.vanishCandidateTicks = 0;
         presence.state = Presence.Vanished;
         rememberAdminStatus(presence.name, Presence.Vanished);
         if (presence.vanishNotified) return;
@@ -756,8 +790,10 @@ public class AntiAdmin extends Module {
         private String name;
         private Presence state;
         private int missingTicks;
+        private int vanishCandidateTicks;
         private double lastDistance = Double.NaN;
         private boolean vanishNotified;
+        private boolean awaitingVanishConfirmation;
 
         private AdminPresence(String name, Presence state) {
             this.name = name;
