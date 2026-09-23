@@ -27,7 +27,6 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerRemoveS2CPacket;
 import net.minecraft.scoreboard.Team;
-import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Uuids;
 
@@ -54,8 +53,7 @@ import java.util.regex.Pattern;
  */
 public class AntiAdmin extends Module {
     private static final String ADMIN_RANK_GLYPH = "\uD800\uDFA0";
-    private static final String SERVER_JOIN_LEAVE_GLYPH = "\uD800\uDFF1";
-    private static final int ADMIN_JOIN_COLOR = 0xFF55FF;
+    private static final String SERVER_JOIN_LEAVE_GLYPH = "\uD800\uDFD1";
     private static final String SERVER_SPACING = "[\\s\\p{Z}]*";
     private static final Pattern SERVER_JOIN_LEAVE_PATTERN = Pattern.compile("^" + SERVER_SPACING + Pattern.quote(SERVER_JOIN_LEAVE_GLYPH) + SERVER_SPACING + "([+-])" + SERVER_SPACING + "([A-Za-z0-9_]{1,16})" + SERVER_SPACING + "$");
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9_]{1,16}");
@@ -195,11 +193,11 @@ public class AntiAdmin extends Module {
                 if (name.isBlank()) name = extractPlayerName(entry.displayName());
 
                 SignalType type = displayNameUpdated ? SignalType.RoleUpdated : SignalType.Added;
-                pendingSignals.add(new AdminListSignal(entry.profileId(), name, entry.displayName(), type, false));
+                pendingSignals.add(new AdminListSignal(entry.profileId(), name, entry.displayName(), type));
             }
         } else if (event.packet instanceof PlayerRemoveS2CPacket packet) {
             for (UUID uuid : packet.profileIds()) {
-                pendingSignals.add(new AdminListSignal(uuid, getKnownPlayerName(uuid), null, SignalType.Removed, false));
+                pendingSignals.add(new AdminListSignal(uuid, getKnownPlayerName(uuid), null, SignalType.Removed));
             }
         }
     }
@@ -211,11 +209,7 @@ public class AntiAdmin extends Module {
 
         String name = matcher.group(2);
         SignalType type = matcher.group(1).equals("+") ? SignalType.Joined : SignalType.Left;
-        boolean adminRoleHint = hasAdminRole(name, event.getMessage(), null)
-            || type == SignalType.Joined
-                && isRoleConfigured("ADMIN")
-                && hasAdminJoinColor(event.getMessage(), matcher.start(2), matcher.end(2));
-        pendingSignals.add(new AdminListSignal(Uuids.getOfflinePlayerUuid(name), name, null, type, adminRoleHint));
+        pendingSignals.add(new AdminListSignal(Uuids.getOfflinePlayerUuid(name), name, null, type));
     }
 
     @EventHandler
@@ -256,12 +250,14 @@ public class AntiAdmin extends Module {
 
         for (AdminListSignal queued : signals) {
             signal = queued;
+            if (isLocalPlayer(signal.uuid(), signal.name())) continue;
+
             if (signal.type() == SignalType.Left) {
                 boolean tracked = findActiveAdmin(signal.uuid(), signal.name()) != null;
                 boolean configured = isConfiguredAdmin(signal.uuid(), signal.name());
                 boolean hiddenLogout = observationReady && !wasPlayerObserved(signal.name());
 
-                if (tracked || configured || signal.adminRoleHint() || hiddenLogout) {
+                if (tracked || configured || hiddenLogout) {
                     confirmLogout(signal.uuid(), signal.name());
                     if (hiddenLogout && !tracked && !configured) {
                         info("Previously unseen player %s logged out; detected as an admin who was already vanished when you joined.", signal.name());
@@ -278,8 +274,7 @@ public class AntiAdmin extends Module {
 
             Map.Entry<UUID, AdminPresence> trackedEntry = findActiveAdmin(signal.uuid(), signal.name());
             boolean tracked = trackedEntry != null;
-            boolean roleDetected = signal.adminRoleHint()
-                || signal.displayName() != null && hasAdminRole(signal.name(), signal.displayName(), null);
+            boolean roleDetected = signal.displayName() != null && hasAdminRole(signal.name(), signal.displayName(), null);
             if (!tracked && !isConfiguredAdmin(signal.uuid(), signal.name()) && !roleDetected) continue;
 
             AdminPresence presence = tracked ? trackedEntry.getValue() : null;
@@ -319,6 +314,7 @@ public class AntiAdmin extends Module {
             UUID uuid = entry.getProfile().id();
             String name = entry.getProfile().name();
             rememberObservedPlayer(name);
+            if (isLocalPlayer(uuid, name)) continue;
             if (isConfirmedLoggedOut(uuid, name)) continue;
             if (findActiveAdmin(uuid, name) == null && !isConfiguredAdmin(uuid, name) && !hasAdminRole(entry)) continue;
 
@@ -506,6 +502,15 @@ public class AntiAdmin extends Module {
         return false;
     }
 
+    private boolean isLocalPlayer(UUID uuid, String name) {
+        if (mc.player == null) return false;
+        if (mc.player.getUuid().equals(uuid)) return true;
+
+        return name != null
+            && !name.isBlank()
+            && mc.player.getGameProfile().name().equalsIgnoreCase(name);
+    }
+
     private Map.Entry<UUID, AdminPresence> findActiveAdmin(UUID uuid, String name) {
         AdminPresence byUuid = activeAdmins.get(uuid);
         if (byUuid != null) return Map.entry(uuid, byUuid);
@@ -663,34 +668,9 @@ public class AntiAdmin extends Module {
         if (team != null) {
             appendText(decorations, team.getPrefix());
             appendText(decorations, team.getSuffix());
-
-            // A few permission/tab-list plugins use the team name rather than
-            // the visible prefix to carry the rank.
-            appendText(decorations, Text.literal(team.getName()));
         }
 
         return containsConfiguredRole(decorations.toString(), playerName);
-    }
-
-    private static boolean hasAdminJoinColor(Text message, int nameStart, int nameEnd) {
-        int[] cursor = { 0 };
-        int[] coloredNameCharacters = { 0 };
-
-        message.visit((style, string) -> {
-            int partStart = cursor[0];
-            int partEnd = partStart + string.length();
-            int overlapStart = Math.max(partStart, nameStart);
-            int overlapEnd = Math.min(partEnd, nameEnd);
-
-            if (overlapStart < overlapEnd && style.getColor() != null && style.getColor().getRgb() == ADMIN_JOIN_COLOR) {
-                coloredNameCharacters[0] += overlapEnd - overlapStart;
-            }
-
-            cursor[0] = partEnd;
-            return java.util.Optional.empty();
-        }, Style.EMPTY);
-
-        return coloredNameCharacters[0] == nameEnd - nameStart;
     }
 
     private Team getScoreboardTeam(String playerName) {
@@ -715,11 +695,6 @@ public class AntiAdmin extends Module {
         }
 
         return false;
-    }
-
-    private boolean isRoleConfigured(String roleName) {
-        String expected = normalize(roleName);
-        return adminRoles.get().stream().anyMatch(role -> normalize(role).equals(expected));
     }
 
     private void removeLegacyAdminGlyphRole() {
@@ -805,7 +780,7 @@ public class AntiAdmin extends Module {
         }
     }
 
-    private record AdminListSignal(UUID uuid, String name, Text displayName, SignalType type, boolean adminRoleHint) {}
+    private record AdminListSignal(UUID uuid, String name, Text displayName, SignalType type) {}
 
     private record AdminStatus(String name, Presence state) {}
 }
