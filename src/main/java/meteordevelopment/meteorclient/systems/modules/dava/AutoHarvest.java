@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.systems.modules.dava;
 import meteordevelopment.meteorclient.events.entity.player.BlockBreakingCooldownEvent;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -36,11 +37,14 @@ import net.minecraft.block.CropBlock;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.AxeItem;
+import net.minecraft.item.HoeItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.screen.GenericContainerScreenHandler;
@@ -65,6 +69,7 @@ import java.util.Map;
 
 public class AutoHarvest extends Module {
     private static final int NEWLY_PLANTED_LOCK_TICKS = 200;
+    private static final int MOVEMENT_SETTLE_TICKS = 3;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgMovement = settings.createGroup("Movement");
@@ -97,8 +102,25 @@ public class AutoHarvest extends Module {
 
     private final Setting<HarvestMode> harvestMode = sgGeneral.add(new EnumSetting.Builder<HarvestMode>()
         .name("harvest-mode")
-        .description("Nuker sends instant break packets to several mature crops each tick. Legit uses normal mining.")
+        .description("Nuker sends instant break packets to soft crops. Pumpkin and melon use continuous mining so they can finish breaking.")
         .defaultValue(HarvestMode.Nuker)
+        .build()
+    );
+
+    private final Setting<Boolean> coordinatedSafeMode = sgGeneral.add(new BoolSetting.Builder()
+        .name("coordinated-safe-mode")
+        .description("When Auto Plant is active, pause before moving after farm actions and briefly settle after moving. Harvest and plant speeds keep their own settings.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> serverActionPause = sgGeneral.add(new IntSetting.Builder()
+        .name("server-action-pause")
+        .description("Ticks to wait after the last break or plant before moving again. Local farming continues during the wait. Increase this if the server pulls you back.")
+        .defaultValue(10)
+        .range(1, 40)
+        .sliderRange(1, 40)
+        .visible(coordinatedSafeMode::get)
         .build()
     );
 
@@ -122,7 +144,7 @@ public class AutoHarvest extends Module {
 
     private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("blocks-per-tick")
-        .description("Maximum mature crops harvested per action tick.")
+        .description("Maximum soft crops harvested per action tick. Pumpkin and melon are mined one at a time.")
         .defaultValue(5)
         .range(1, 10)
         .sliderRange(1, 10)
@@ -320,6 +342,17 @@ public class AutoHarvest extends Module {
     private int cropIndex;
     private int emptyScans;
     private int breakTimer;
+    private BlockPos fruitMiningTarget;
+    private int originalHarvestSlot;
+    private int selectedHarvestSlot;
+    private int movementSettleTicks;
+    private int serverActionPauseTicks;
+    private int adaptiveActionPauseTicks;
+    private int harvestPriorityScanAge;
+    private Item harvestPriorityScanCrop;
+    private boolean harvestPriorityTargetFound;
+    private volatile int lastFarmActionAge;
+    private volatile boolean serverCorrectionPending;
     private int moveScanTimer;
     private int depositTimer;
     private int chestOpenTimer;
@@ -347,6 +380,17 @@ public class AutoHarvest extends Module {
         activeCrop = cropOrder.get().isEmpty() ? null : cropOrder.get().getFirst();
         emptyScans = 0;
         breakTimer = 0;
+        fruitMiningTarget = null;
+        originalHarvestSlot = -1;
+        selectedHarvestSlot = -1;
+        movementSettleTicks = 0;
+        serverActionPauseTicks = 0;
+        adaptiveActionPauseTicks = 0;
+        harvestPriorityScanAge = -1000;
+        harvestPriorityScanCrop = null;
+        harvestPriorityTargetFound = false;
+        lastFarmActionAge = -1000;
+        serverCorrectionPending = false;
         moveScanTimer = moveScanDelay.get();
         depositTimer = 0;
         chestOpenTimer = 0;
@@ -367,6 +411,8 @@ public class AutoHarvest extends Module {
     public void onDeactivate() {
         if (depositingInventory && mc.currentScreen instanceof HandledScreen<?>) mc.currentScreen.close();
         stopPathing();
+        restoreHarvestSlot();
+        fruitMiningTarget = null;
         targets.clear();
         targetCooldowns.clear();
         newlyPlanted.clear();
@@ -379,14 +425,50 @@ public class AutoHarvest extends Module {
         return activeCrop == null ? null : Registries.ITEM.getId(activeCrop).getPath().toUpperCase(Locale.ROOT);
     }
 
+    /** The crop selected for the current harvest pass. AutoPlant follows this priority. */
+    public Item getActiveCrop() {
+        return activeCrop;
+    }
+
+    public boolean isCoordinatedSafeMode() {
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        return coordinatedSafeMode.get() && autoPlant != null && autoPlant.isActive();
+    }
+
+    public boolean isWaitingForServerAction() {
+        return isCoordinatedSafeMode() && (serverActionPauseTicks > 0 || serverCorrectionPending);
+    }
+
+    public void markCoordinatedAction() {
+        if (!isCoordinatedSafeMode()) return;
+        lastFarmActionAge = mc.player.age;
+        serverActionPauseTicks = Math.max(serverActionPause.get(), adaptiveActionPauseTicks);
+    }
+
+    /** Release the shared movement controller before AutoPlant walks to a dropped seed. */
+    public void yieldMovementToAutoPlant() {
+        stopPathing();
+        restoreHarvestSlot();
+        targets.clear();
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST)
     private void onTick(TickEvent.Pre event) {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null) return;
 
         tickTargetCooldowns();
         tickNewlyPlanted();
+        if (serverCorrectionPending) {
+            serverCorrectionPending = false;
+            adaptiveActionPauseTicks = Math.min(40, Math.max(serverActionPause.get(), adaptiveActionPauseTicks) + 5);
+            serverActionPauseTicks = Math.max(serverActionPauseTicks, adaptiveActionPauseTicks);
+            stopPathing();
+        }
+        if (movementSettleTicks > 0) movementSettleTicks--;
+        if (serverActionPauseTicks > 0) serverActionPauseTicks--;
 
         if (depositingInventory) {
+            restoreHarvestSlot();
             targets.clear();
             depositInventory();
             return;
@@ -394,12 +476,14 @@ public class AutoHarvest extends Module {
 
         if (mc.currentScreen != null) {
             stopPathing();
+            restoreHarvestSlot();
             targets.clear();
             return;
         }
 
         if (!syncActiveCrop()) {
             stopPathing();
+            restoreHarvestSlot();
             targets.clear();
             return;
         }
@@ -407,6 +491,7 @@ public class AutoHarvest extends Module {
         AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
         if (autoPlant != null && autoPlant.isActive() && autoPlant.isWorking()) {
             stopPathing();
+            restoreHarvestSlot();
             targets.clear();
             return;
         }
@@ -415,6 +500,7 @@ public class AutoHarvest extends Module {
             depositingInventory = true;
             warnedDepositBlocked = false;
             stopPathing();
+            restoreHarvestSlot();
             targets.clear();
             depositInventory();
             return;
@@ -428,9 +514,21 @@ public class AutoHarvest extends Module {
             return;
         }
 
+        restoreHarvestSlot();
+        fruitMiningTarget = null;
+
         if (searchOrContinuePath()) {
             emptyScans++;
             if (emptyScans >= finishScans.get()) advanceCrop();
+        }
+    }
+
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (event.packet instanceof PlayerPositionLookS2CPacket && isCoordinatedSafeMode()
+            && mc.player != null && mc.player.age - lastFarmActionAge >= 0
+            && mc.player.age - lastFarmActionAge <= 40) {
+            serverCorrectionPending = true;
         }
     }
 
@@ -507,6 +605,7 @@ public class AutoHarvest extends Module {
 
         cropIndex = Math.min(cropIndex, order.size() - 1);
         activeCrop = order.get(cropIndex);
+        fruitMiningTarget = null;
         emptyScans = 0;
         moveScanTimer = moveScanDelay.get();
         announceActiveCrop();
@@ -523,6 +622,7 @@ public class AutoHarvest extends Module {
         stopPathing();
         cropIndex = (cropIndex + 1) % order.size();
         activeCrop = order.get(cropIndex);
+        fruitMiningTarget = null;
         emptyScans = 0;
         moveScanTimer = moveScanDelay.get();
         announceActiveCrop();
@@ -557,10 +657,15 @@ public class AutoHarvest extends Module {
     }
 
     private void harvestTargets() {
+        if (movementSettleTicks > 0) return;
+        if (isFruitCrop()) {
+            harvestFruitTarget();
+            return;
+        }
         if (breakTimer++ < breakDelay.get()) return;
         breakTimer = 0;
 
-        int limit = harvestMode.get() == HarvestMode.Nuker ? Math.max(5, blocksPerTick.get()) : blocksPerTick.get();
+        int limit = blocksPerTick.get();
         int harvested = 0;
         for (BlockPos target : targets) {
             if (harvested >= limit) break;
@@ -570,7 +675,9 @@ public class AutoHarvest extends Module {
             AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
             if (autoPlant != null && autoPlant.isActive()) autoPlant.rememberHarvestedCrop(target, activeCrop);
 
+            Item crop = activeCrop;
             Runnable action = () -> {
+                if (!isActive() || mc.world == null || crop != activeCrop) return;
                 BlockState state = mc.world.getBlockState(target);
                 if (!isPlantSuppressed(target) && isWithinActionRange(target) && isMatureCrop(state, activeCrop) && BlockUtils.canBreak(target, state)) breakCrop(target);
             };
@@ -582,7 +689,43 @@ public class AutoHarvest extends Module {
         }
     }
 
+    private void harvestFruitTarget() {
+        // Pumpkin and melon need several mining ticks. Keep the same target and
+        // do not put it on cooldown until the block actually changes.
+        if (fruitMiningTarget == null || !targets.contains(fruitMiningTarget) || !isHarvestTarget(fruitMiningTarget)) {
+            fruitMiningTarget = null;
+            if (breakTimer++ < breakDelay.get()) return;
+            breakTimer = 0;
+            fruitMiningTarget = targets.getFirst().toImmutable();
+
+            AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+            if (autoPlant != null && autoPlant.isActive()) autoPlant.rememberHarvestedCrop(fruitMiningTarget, activeCrop);
+        }
+
+        BlockPos target = fruitMiningTarget;
+        Item crop = activeCrop;
+        Runnable action = () -> {
+            if (!isActive() || mc.world == null || crop != activeCrop) return;
+            BlockState state = mc.world.getBlockState(target);
+            if (isPlantSuppressed(target) || !isWithinActionRange(target) || !isMatureCrop(state, activeCrop)
+                || !BlockUtils.canBreak(target, state)) {
+                fruitMiningTarget = null;
+                return;
+            }
+            breakCrop(target);
+        };
+        if (rotate.get()) Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target), action);
+        else action.run();
+
+        if (render.get()) RenderUtils.renderTickingBlock(target, sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
+    }
+
     private void breakCrop(BlockPos pos) {
+        selectHarvestTool(mc.world.getBlockState(pos));
+        if (isFruitCrop()) {
+            if (BlockUtils.breakBlock(pos, swing.get())) markCoordinatedAction();
+            return;
+        }
         if (harvestMode.get() == HarvestMode.Nuker || packetMine.get()) {
             mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, BlockUtils.getDirection(pos), sequence));
@@ -592,12 +735,76 @@ public class AutoHarvest extends Module {
 
             mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos, BlockUtils.getDirection(pos), sequence));
+            markCoordinatedAction();
         } else {
-            BlockUtils.breakBlock(pos, swing.get());
+            if (BlockUtils.breakBlock(pos, swing.get())) markCoordinatedAction();
         }
     }
 
+    private boolean isFruitCrop() {
+        return activeCrop == Items.PUMPKIN_SEEDS || activeCrop == Items.MELON_SEEDS;
+    }
+
+    private void selectHarvestTool(BlockState state) {
+        int selected = mc.player.getInventory().getSelectedSlot();
+        int preferredSlot = -1;
+        float bestSpeed = Float.NEGATIVE_INFINITY;
+
+        for (int offset = 0; offset < 9; offset++) {
+            int slot = (selected + offset) % 9;
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (stack.isEmpty() || !(isFruitCrop() ? stack.getItem() instanceof AxeItem : stack.getItem() instanceof HoeItem)) continue;
+
+            float speed = stack.getMiningSpeedMultiplier(state);
+            if (speed > bestSpeed) {
+                bestSpeed = speed;
+                preferredSlot = slot;
+            }
+        }
+
+        if (preferredSlot == -1) {
+            // Without the preferred tool, choose an empty main-hand slot if one
+            // exists. A full hotbar still harvests with the current held item.
+            for (int slot = 0; slot < 9; slot++) {
+                if (mc.player.getInventory().getStack(slot).isEmpty()) {
+                    preferredSlot = slot;
+                    break;
+                }
+            }
+        }
+
+        if (preferredSlot == -1) {
+            restoreHarvestSlot();
+            return;
+        }
+
+        if (selectedHarvestSlot != -1 && selected != selectedHarvestSlot) originalHarvestSlot = selected;
+        if (selected == preferredSlot) {
+            selectedHarvestSlot = preferredSlot;
+            return;
+        }
+
+        if (originalHarvestSlot == -1) originalHarvestSlot = selected;
+        if (InvUtils.swap(preferredSlot, false)) selectedHarvestSlot = preferredSlot;
+    }
+
+    private void restoreHarvestSlot() {
+        if (mc.player != null && originalHarvestSlot != -1 && selectedHarvestSlot != -1
+            && mc.player.getInventory().getSelectedSlot() == selectedHarvestSlot) {
+            InvUtils.swap(originalHarvestSlot, false);
+        }
+        originalHarvestSlot = -1;
+        selectedHarvestSlot = -1;
+    }
+
     private boolean searchOrContinuePath() {
+        // Only navigation waits for the server to finish the last farm action.
+        // Local breaks and placements can keep using their configured rates.
+        if (isWaitingForServerAction()) {
+            stopPathing();
+            return false;
+        }
+
         if (!autoMove.get()) {
             stopPathing();
             if (moveScanTimer++ < moveScanDelay.get()) return false;
@@ -616,7 +823,7 @@ public class AutoHarvest extends Module {
                 else moveToTarget(movementTarget);
                 emptyScans = 0;
                 return false;
-            } else if (PathManagers.get().isPathing()) {
+            } else if (pathingByModule && PathManagers.get().isPathing()) {
                 emptyScans = 0;
                 return false;
             }
@@ -709,6 +916,23 @@ public class AutoHarvest extends Module {
         return movementTarget != null || pathingByModule || directMoving;
     }
 
+    public boolean isDepositingInventory() {
+        return depositingInventory;
+    }
+
+    /** Let AutoPlant yield distant routes while a mature priority crop can be harvested. */
+    public boolean hasHarvestTargetInSearchRange() {
+        if (!autoMove.get() || mc.player == null || mc.world == null || activeCrop == null) return false;
+
+        int age = mc.player.age;
+        if (harvestPriorityScanCrop != activeCrop || age < harvestPriorityScanAge || age - harvestPriorityScanAge >= 5) {
+            harvestPriorityTargetFound = findNearestDistantTarget() != null;
+            harvestPriorityScanCrop = activeCrop;
+            harvestPriorityScanAge = age;
+        }
+        return harvestPriorityTargetFound;
+    }
+
     /** Returns true while AutoPlant must not take control of the player. */
     public boolean isBusyForAutoPlant() {
         return isControllingMovement() || !targets.isEmpty() || depositingInventory;
@@ -763,22 +987,20 @@ public class AutoHarvest extends Module {
     }
 
     private void moveToTarget(BlockPos workTarget) {
-        BlockPos movementPoint = getMovementPoint(workTarget);
         stopPathing();
         movementTarget = workTarget;
 
         if (usesDirectMovement()) {
-            directMovementPoint = getDirectMovementPoint(movementPoint);
+            directMovementPoint = getDirectMovementPoint(getMovementPoint(workTarget));
             directMoving = true;
             updateDirectMovement();
             return;
         }
 
-        // GoalGetToBlock may stop on the far side of this waypoint. That can
-        // leave the crop outside interaction range and make Baritone repeatedly
-        // select the same already handled plot. Farming needs the player to
-        // stand on the calculated work point itself.
-        PathManagers.get().moveToExact(movementPoint);
+        // Baritone only needs to stand beside the crop. An exact GoalBlock on
+        // a crop/farmland tile can be unreachable, leaving the player still.
+        // Targeting the crop itself also avoids the far-side waypoint problem.
+        PathManagers.get().moveTo(workTarget);
         pathingByModule = true;
     }
 
@@ -940,6 +1162,7 @@ public class AutoHarvest extends Module {
     }
 
     private void stopPathing() {
+        if (isCoordinatedSafeMode() && isControllingMovement()) movementSettleTicks = MOVEMENT_SETTLE_TICKS;
         if (pathingByModule) PathManagers.get().stop();
         stopDirectMovement();
         pathingByModule = false;
@@ -1036,6 +1259,10 @@ public class AutoHarvest extends Module {
         }
 
         if (!isWithinStorageRange(chestPos)) {
+            if (isWaitingForServerAction()) {
+                stopPathing();
+                return;
+            }
             moveToStorage(chestPos);
             return;
         }
@@ -1069,6 +1296,9 @@ public class AutoHarvest extends Module {
     }
 
     private boolean dropFarmItemToIslandStorage() {
+        AutoPlant autoPlant = Modules.get().get(AutoPlant.class);
+        if (autoPlant != null && autoPlant.isActive() && !autoPlant.isWarehouseWithdrawEnabled()) return false;
+
         int slot = findFarmStorageSlot(SlotUtils.MAIN_START, SlotUtils.MAIN_END);
         if (slot == -1) slot = findFarmStorageSlot(SlotUtils.HOTBAR_START, SlotUtils.HOTBAR_END);
         return dropItemToIslandStorage(slot);
@@ -1084,6 +1314,10 @@ public class AutoHarvest extends Module {
         if (slot == -1) return false;
 
         if (movementEngine.get() == MovementEngine.Fly) {
+            if (isWaitingForServerAction() && !isAtSafeLandingPoint()) {
+                stopPathing();
+                return true;
+            }
             if (flyLandingUnavailable) return true;
 
             if (flyLandingPoint == null) {

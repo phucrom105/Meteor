@@ -10,6 +10,10 @@ import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
@@ -29,6 +33,8 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.CropBlock;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -54,6 +60,7 @@ public class AutoPlant extends Module {
     private static final int TICKS_PER_SECOND = 20;
     private static final int PENDING_TICKS = 40;
     private static final int PLANT_PROTECTION_TICKS = 100;
+    private static final int MOVEMENT_SETTLE_TICKS = 3;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgWarehouse = settings.createGroup("Warehouse");
@@ -301,18 +308,40 @@ public class AutoPlant extends Module {
     private int movedFromSlot;
     private int movedHotbarSlot;
     private int placeTimer;
+    private int movementSettleTicks;
     private int withdrawCooldown;
     private int withdrawWaitTimer;
     private int finishTimer;
     private int dropTimer;
     private int moveScanTimer;
+    private int lootPickupWaitTicks;
+    private int lootTravelTicks;
+    private int ignoredLootId;
+    private int ignoredLootTicks;
     private BlockPos movementTarget;
     private BlockPos directMovementPoint;
     private BlockPos plantingReadyTarget;
+    private BlockPos lootMovementPoint;
+    private ItemEntity lootTarget;
     private boolean directMoving;
 
     public AutoPlant() {
-        super(Categories.Dava, "auto-plant", "Plants selected crops, restores harvested crop types, and manages planting items with /kho.");
+        super(Categories.Dava, "auto-plant", "Plants the current harvest crop and collects dropped planting items when /kho is disabled.");
+    }
+
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        WButton withdrawButton = list.add(theme.button(withdrawButtonText())).expandX().widget();
+        withdrawButton.action = () -> {
+            autoWithdraw.set(!autoWithdraw.get());
+            withdrawButton.set(withdrawButtonText());
+        };
+        return list;
+    }
+
+    private String withdrawButtonText() {
+        return autoWithdraw.get() ? "Disable /kho withdraw" : "Enable /kho withdraw";
     }
 
     @Override
@@ -331,14 +360,21 @@ public class AutoPlant extends Module {
         movedFromSlot = -1;
         movedHotbarSlot = -1;
         placeTimer = 0;
+        movementSettleTicks = 0;
         withdrawCooldown = 0;
         withdrawWaitTimer = 0;
         finishTimer = 0;
         dropTimer = 0;
         moveScanTimer = moveScanDelay.get();
+        lootPickupWaitTicks = 0;
+        lootTravelTicks = 0;
+        ignoredLootId = -1;
+        ignoredLootTicks = 0;
         movementTarget = null;
         directMovementPoint = null;
         plantingReadyTarget = null;
+        lootMovementPoint = null;
+        lootTarget = null;
         directMoving = false;
     }
 
@@ -358,7 +394,14 @@ public class AutoPlant extends Module {
         movementTarget = null;
         directMovementPoint = null;
         plantingReadyTarget = null;
+        lootMovementPoint = null;
+        lootTarget = null;
+        lootPickupWaitTicks = 0;
+        lootTravelTicks = 0;
+        ignoredLootId = -1;
+        ignoredLootTicks = 0;
         directMoving = false;
+        movementSettleTicks = 0;
     }
 
     @EventHandler
@@ -386,6 +429,7 @@ public class AutoPlant extends Module {
         if (!Utils.canUpdate() || mc.player == null || mc.world == null) return;
 
         tickTimers();
+        if (movementSettleTicks > 0) movementSettleTicks--;
         updatePendingPositions();
         updatePlantProtection();
         updatePlantedPositions();
@@ -408,15 +452,75 @@ public class AutoPlant extends Module {
             return;
         }
 
-        // Baritone is a single shared path manager. Let AutoHarvest finish its
-        // current route before AutoPlant asks Baritone for a different goal;
-        // otherwise the two modules replace each other's goals every tick.
         AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
-        if (autoHarvest != null && autoHarvest.isActive() && autoHarvest.isBusyForAutoPlant()) {
-            if (pathingByModule) stopPathing();
+        if (autoHarvest != null && autoHarvest.isActive()) {
+            Item priority = autoHarvest.getActiveCrop();
+            if (priority == null || !crops.get().contains(priority)) {
+                stopPathing();
+                targets.clear();
+                clearLootTarget();
+                plantingReadyTarget = null;
+                if (activeItem != null) {
+                    restoreHotbarSlot();
+                    resetActiveItem();
+                }
+                return;
+            }
+
+            if (activeItem != priority) {
+                stopPathing();
+                restoreHotbarSlot();
+                resetActiveItem();
+                activeItem = priority;
+            }
+        }
+
+        if (autoHarvest != null && autoHarvest.isActive() && autoHarvest.isDepositingInventory()) {
+            clearLootTarget();
+            stopPathing();
             targets.clear();
             plantingReadyTarget = null;
             return;
+        }
+
+        if (!autoWithdraw.get()) {
+            waitingForWithdraw = false;
+            withdrawWaitTimer = 0;
+            returningExtras = false;
+            warehouseManaged = false;
+
+            if (activeItem != null && autoMove.get()
+                && (autoHarvest == null || !autoHarvest.isActive() || !autoHarvest.isWaitingForServerAction())
+                && (!findUsablePlantingItem(activeItem).found() || autoHarvest == null || !autoHarvest.isActive()
+                    || !autoHarvest.hasHarvestTargetInSearchRange())
+                && collectDroppedPlantingItem(autoHarvest)) return;
+
+            if (activeItem != null && !findUsablePlantingItem(activeItem).found()) {
+                clearLootTarget();
+                stopPathing();
+                targets.clear();
+                plantingReadyTarget = null;
+                return;
+            }
+        }
+        clearLootTarget();
+
+        // Both modules share the path manager and movement keys. Let AutoHarvest
+        // finish its route before AutoPlant starts another one.
+        if (autoHarvest != null && autoHarvest.isActive() && autoHarvest.isBusyForAutoPlant()) {
+            // Release Direct/Fly keys as well as Baritone. Keeping movementTarget
+            // here makes AutoHarvest see us as busy and both modules yield forever.
+            stopPathing();
+            targets.clear();
+            plantingReadyTarget = null;
+            return;
+        }
+
+        if (returningExtras && autoHarvest != null && autoHarvest.isActive()
+            && autoHarvest.hasHarvestTargetInSearchRange()) {
+            // Resume farming; surplus seeds can be returned after this crop pass.
+            returningExtras = false;
+            stopPathing();
         }
 
         if (returningExtras) {
@@ -474,12 +578,16 @@ public class AutoPlant extends Module {
         if (!available.found()) {
             restoreHotbarSlot();
             tryWithdraw();
+            // Waiting for /kho does not own the movement controller.
+            targets.clear();
+            plantingReadyTarget = null;
             return;
         }
 
         waitingForWithdraw = false;
         withdrawWaitTimer = 0;
 
+        if (movementSettleTicks > 0) return;
         if (placeTimer++ < placeDelay.get()) return;
         placeTimer = 0;
 
@@ -487,8 +595,9 @@ public class AutoPlant extends Module {
         if (seedSlot == -1) return;
 
         int planted = 0;
+        int limit = plantsPerTick.get();
         for (PlantTarget target : targets) {
-            if (planted >= plantsPerTick.get()) break;
+            if (planted >= limit) break;
             if (isPlantPending(target.pos())) continue;
 
             plant(target, seedSlot);
@@ -509,7 +618,16 @@ public class AutoPlant extends Module {
         // actively placing a batch. A selected crop and its server-update grace
         // period can continue in parallel; per-position suppression protects the
         // newly planted block from being harvested too early.
-        return returningExtras || waitingForWithdraw || movementTarget != null || plantingReadyTarget != null || !targets.isEmpty();
+        return returningExtras || lootTarget != null || movementTarget != null || plantingReadyTarget != null || !targets.isEmpty();
+    }
+
+    public boolean isWarehouseWithdrawEnabled() {
+        return autoWithdraw.get();
+    }
+
+    private boolean isCoordinatedSafeMode() {
+        AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
+        return autoHarvest != null && autoHarvest.isActive() && autoHarvest.isCoordinatedSafeMode();
     }
 
     public boolean isPlantPending(BlockPos pos) {
@@ -554,10 +672,139 @@ public class AutoPlant extends Module {
         return !isMatureCrop(state);
     }
 
+    private boolean collectDroppedPlantingItem(AutoHarvest autoHarvest) {
+        ItemEntity item = lootTarget;
+        if (!isLootCandidate(item)) {
+            clearLootTarget();
+            item = null;
+            double nearestDistance = Double.MAX_VALUE;
+
+            for (Entity entity : mc.world.getEntities()) {
+                if (!(entity instanceof ItemEntity candidate) || !isLootCandidate(candidate)) continue;
+                double distance = candidate.squaredDistanceTo(mc.player);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    item = candidate;
+                }
+            }
+        }
+
+        if (item == null) return false;
+
+        if (lootTarget != item) {
+            lootPickupWaitTicks = 0;
+            lootTravelTicks = 0;
+        }
+
+        // AutoHarvest may own Baritone or the movement keys from the previous
+        // tick. Release them before requesting the dropped item's position.
+        if (autoHarvest != null && autoHarvest.isActive() && autoHarvest.isControllingMovement()) {
+            autoHarvest.yieldMovementToAutoPlant();
+        }
+        lootTarget = item;
+
+        if (isWithinPickupRange(item)) {
+            if (lootMovementPoint != null) stopPathing();
+            lootMovementPoint = null;
+            lootTravelTicks = 0;
+            if (++lootPickupWaitTicks > 60) {
+                ignoredLootId = item.getId();
+                ignoredLootTicks = 100;
+                clearLootTarget();
+                return false;
+            }
+            return true;
+        }
+        lootPickupWaitTicks = 0;
+        if (++lootTravelTicks > 400) {
+            ignoredLootId = item.getId();
+            ignoredLootTicks = 100;
+            clearLootTarget();
+            return false;
+        }
+
+        BlockPos itemPos = item.getBlockPos();
+        if (!itemPos.equals(lootMovementPoint) || (!directMoving && (!pathingByModule || !PathManagers.get().isPathing()))) {
+            stopPathing();
+            lootMovementPoint = itemPos.toImmutable();
+            if (usesDirectMovement()) {
+                // Loot must be reached at ground level, including in Fly mode.
+                directMovementPoint = lootMovementPoint;
+                directMoving = true;
+                updateDirectMovement();
+            } else {
+                PathManagers.get().moveToExact(lootMovementPoint);
+                pathingByModule = true;
+            }
+        } else if (directMoving) {
+            updateDirectMovement();
+        }
+
+        return true;
+    }
+
+    private boolean isLootCandidate(ItemEntity item) {
+        if (item == null || !item.isAlive() || (item.getId() == ignoredLootId && ignoredLootTicks > 0)
+            || !isUsablePlantingStack(item.getStack(), activeItem)) return false;
+
+        Vec3d distance = new Vec3d(
+            item.getX() - mc.player.getX(),
+            item.getY() - mc.player.getY(),
+            item.getZ() - mc.player.getZ()
+        );
+        int horizontalRange = searchRange.get();
+        return distance.x * distance.x + distance.z * distance.z <= horizontalRange * horizontalRange
+            && Math.abs(distance.y) <= 4
+            && hasRoomFor(item.getStack());
+    }
+
+    private boolean hasRoomFor(ItemStack dropped) {
+        for (int slot = SlotUtils.HOTBAR_START; slot <= SlotUtils.MAIN_END; slot++) {
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (stack.isEmpty()) return true;
+            if (ItemStack.areItemsAndComponentsEqual(stack, dropped) && stack.getCount() < stack.getMaxCount()) return true;
+        }
+        return false;
+    }
+
+    private boolean isWithinPickupRange(ItemEntity item) {
+        Vec3d distance = new Vec3d(
+            item.getX() - mc.player.getX(),
+            item.getY() - mc.player.getY(),
+            item.getZ() - mc.player.getZ()
+        );
+        return distance.x * distance.x + distance.z * distance.z <= 0.64 && Math.abs(distance.y) <= 0.9;
+    }
+
+    private void clearLootTarget() {
+        if (lootMovementPoint != null) stopPathing();
+        lootMovementPoint = null;
+        lootTarget = null;
+        lootPickupWaitTicks = 0;
+        lootTravelTicks = 0;
+    }
+
     private boolean handleMovement() {
+        AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
+        // A distant mature crop takes route priority. Otherwise AutoPlant can
+        // hold Baritone indefinitely while AutoHarvest waits for the same path.
+        if (autoHarvest != null && autoHarvest.isActive()
+            && (autoHarvest.isWaitingForServerAction() || autoHarvest.hasHarvestTargetInSearchRange())) {
+            stopPathing();
+            plantingReadyTarget = null;
+            return true;
+        }
+
         if (!autoMove.get()) {
             stopPathing();
             return false;
+        }
+
+        if (activeItem != null && !findUsablePlantingItem(activeItem).found()) {
+            stopPathing();
+            plantingReadyTarget = null;
+            tryWithdraw();
+            return true;
         }
 
         if (movementTarget != null) {
@@ -792,6 +1039,9 @@ public class AutoPlant extends Module {
     }
 
     private void stopPathing() {
+        if (isCoordinatedSafeMode() && (movementTarget != null || pathingByModule || directMoving)) {
+            movementSettleTicks = MOVEMENT_SETTLE_TICKS;
+        }
         if (pathingByModule) PathManagers.get().stop();
         stopDirectMovement();
         pathingByModule = false;
@@ -835,6 +1085,17 @@ public class AutoPlant extends Module {
     }
 
     private Item getItemForEmptyFarmland(BlockPos pos) {
+        AutoHarvest autoHarvest = Modules.get().get(AutoHarvest.class);
+        if (autoHarvest != null && autoHarvest.isActive()) {
+            Item priority = autoHarvest.getActiveCrop();
+            if (priority == null || !crops.get().contains(priority)) return null;
+
+            Item remembered = rememberedCrops.get(pos);
+            if (remembered != null && remembered != priority) return null;
+            if (mode.get() == Mode.Replant && remembered == null) return null;
+            return priority;
+        }
+
         Item remembered = rememberedCrops.get(pos);
         if (mode.get() != Mode.EmptySoil && remembered != null && crops.get().contains(remembered)) return remembered;
         if (mode.get() == Mode.Replant) return null;
@@ -868,6 +1129,7 @@ public class AutoPlant extends Module {
             }
 
             BlockUtils.interact(hitResult, hand, swing.get());
+            if (autoHarvest != null && autoHarvest.isActive()) autoHarvest.markCoordinatedAction();
             if (targetPos.equals(plantingReadyTarget)) plantingReadyTarget = null;
             if (hand == Hand.MAIN_HAND) InvUtils.swapBack();
         };
@@ -968,6 +1230,12 @@ public class AutoPlant extends Module {
 
     private void resetActiveItem() {
         activeItem = null;
+        lootTarget = null;
+        lootMovementPoint = null;
+        lootPickupWaitTicks = 0;
+        lootTravelTicks = 0;
+        ignoredLootId = -1;
+        ignoredLootTicks = 0;
         warehouseManaged = false;
         waitingForWithdraw = false;
         returningExtras = false;
@@ -984,6 +1252,7 @@ public class AutoPlant extends Module {
     private void tickTimers() {
         if (withdrawCooldown > 0) withdrawCooldown--;
         if (withdrawWaitTimer > 0) withdrawWaitTimer--;
+        if (ignoredLootTicks > 0) ignoredLootTicks--;
     }
 
     private void updatePendingPositions() {
