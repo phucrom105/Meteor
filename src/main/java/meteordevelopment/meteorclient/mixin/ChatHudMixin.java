@@ -8,6 +8,8 @@ package meteordevelopment.meteorclient.mixin;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.ModifyReceiver;
 import com.llamalad7.mixinextras.sugar.Local;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.mixininterface.IChatHud;
@@ -46,6 +48,7 @@ public abstract class ChatHudMixin implements IChatHud {
     @Shadow @Final private List<ChatHudLine> messages;
 
     @Unique private BetterChat betterChat;
+    @Unique private final IntList earlyLines = new IntArrayList();
     @Unique private int nextId;
     @Unique private boolean skipOnAddMessage;
 
@@ -104,7 +107,9 @@ public abstract class ChatHudMixin implements IChatHud {
             for (int i = messages.size() - 1; i > -1 ; i--) {
                 if (((IChatHudLine) (Object) messages.get(i)).meteor$getId() == nextId && nextId != 0) {
                     messages.remove(i);
-                    Modules.get().get(BetterChat.class).lines.removeInt(i);
+                    BetterChat betterChat = getBetterChat();
+                    IntList lines = betterChat != null ? betterChat.lines : earlyLines;
+                    if (i < lines.size()) lines.removeInt(i);
                 }
             }
 
@@ -122,6 +127,7 @@ public abstract class ChatHudMixin implements IChatHud {
         slice = @Slice(from = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/hud/ChatHud;visibleMessages:Ljava/util/List;")), at = @At(value = "INVOKE", target = "Ljava/util/List;size()I"))
     private int addMessageListSizeProxy(int size) {
         BetterChat betterChat = getBetterChat();
+        if (betterChat == null) return size;
         if (betterChat.isLongerChat() && betterChat.getChatLength() >= 100) return size - betterChat.getChatLength();
         return size;
     }
@@ -130,12 +136,14 @@ public abstract class ChatHudMixin implements IChatHud {
 
     @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/math/MathHelper;ceil(F)I"))
     private int onRender_modifyWidth(int width) {
-        return betterChat.modifyChatWidth(width);
+        BetterChat betterChat = getBetterChat();
+        return betterChat != null ? betterChat.modifyChatWidth(width) : width;
     }
 
     @ModifyReceiver(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/DrawContext;drawTextWithShadow(Lnet/minecraft/client/font/TextRenderer;Lnet/minecraft/text/OrderedText;III)I"))
     private DrawContext onRender_beforeDrawTextWithShadow(DrawContext context, TextRenderer textRenderer, OrderedText text, int x, int y, int color, @Local ChatHudLine.Visible line) {
-        getBetterChat().drawPlayerHead(context, line, y, color);
+        BetterChat betterChat = getBetterChat();
+        if (betterChat != null) betterChat.drawPlayerHead(context, line, y, color);
         return context;
     }
 
@@ -143,7 +151,9 @@ public abstract class ChatHudMixin implements IChatHud {
 
     @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/ChatHudLine$Visible;indicator()Lnet/minecraft/client/gui/hud/MessageIndicator;"))
     private MessageIndicator onRender_modifyIndicator(MessageIndicator indicator) {
-        return Modules.get().get(NoRender.class).noMessageSignatureIndicator() ? null : indicator;
+        Modules modules = Modules.get();
+        NoRender noRender = modules != null ? modules.get(NoRender.class) : null;
+        return noRender != null && noRender.noMessageSignatureIndicator() ? null : indicator;
     }
 
     // Anti spam
@@ -151,36 +161,47 @@ public abstract class ChatHudMixin implements IChatHud {
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/ChatHud;isChatFocused()Z"), locals = LocalCapture.CAPTURE_FAILSOFT)
     private void onBreakChatMessageLines(Text message, MessageSignatureData signature, int ticks, MessageIndicator indicator, boolean refresh, CallbackInfo ci, int i, List<OrderedText> list) {
-        getBetterChat().lines.add(0, list.size());
+        BetterChat betterChat = getBetterChat();
+        (betterChat != null ? betterChat.lines : earlyLines).add(0, list.size());
     }
 
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
         slice = @Slice(from = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/hud/ChatHud;messages:Ljava/util/List;")), at = @At(value = "INVOKE", target = "Ljava/util/List;remove(I)Ljava/lang/Object;"))
     private void onRemoveMessage(Text message, MessageSignatureData signature, int ticks, MessageIndicator indicator, boolean refresh, CallbackInfo ci) {
         BetterChat betterChat = getBetterChat();
-        int size = betterChat.lines.size() - (betterChat.isLongerChat() && betterChat.getChatLength() >= 100 ? betterChat.getChatLength() : 0);
+        IntList lines = betterChat != null ? betterChat.lines : earlyLines;
+        int size = lines.size() - (betterChat != null && betterChat.isLongerChat() && betterChat.getChatLength() >= 100 ? betterChat.getChatLength() : 0);
 
         while (size > 100) {
-            betterChat.lines.removeInt(size - 1);
+            lines.removeInt(size - 1);
             size--;
         }
     }
 
     @Inject(method = "clear", at = @At("HEAD"))
     private void onClear(boolean clearHistory, CallbackInfo ci) {
-        getBetterChat().lines.clear();
+        BetterChat betterChat = getBetterChat();
+        (betterChat != null ? betterChat.lines : earlyLines).clear();
     }
 
     @Inject(method = "refresh", at = @At("HEAD"))
     private void onRefresh(CallbackInfo ci) {
-        getBetterChat().lines.clear();
+        BetterChat betterChat = getBetterChat();
+        (betterChat != null ? betterChat.lines : earlyLines).clear();
     }
 
     // Other
     @Unique
     private BetterChat getBetterChat() {
         if (betterChat == null) {
-            betterChat = Modules.get().get(BetterChat.class);
+            Modules modules = Modules.get();
+            if (modules != null) {
+                betterChat = modules.get(BetterChat.class);
+                if (betterChat != null && !earlyLines.isEmpty()) {
+                    betterChat.lines.addAll(earlyLines);
+                    earlyLines.clear();
+                }
+            }
         }
 
         return betterChat;
