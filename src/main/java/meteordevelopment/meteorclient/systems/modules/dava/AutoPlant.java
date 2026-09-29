@@ -326,7 +326,7 @@ public class AutoPlant extends Module {
     private boolean directMoving;
 
     public AutoPlant() {
-        super(Categories.Dava, "auto-plant", "Plants the current harvest crop and collects dropped planting items when /kho is disabled.");
+        super(Categories.Dava, "auto-plant", "Plants the current harvest crop and collects dropped crops, pumpkins, and melons.");
     }
 
     @Override
@@ -488,13 +488,19 @@ public class AutoPlant extends Module {
             withdrawWaitTimer = 0;
             returningExtras = false;
             warehouseManaged = false;
+        }
 
-            if (activeItem != null && autoMove.get()
-                && (autoHarvest == null || !autoHarvest.isActive() || !autoHarvest.isWaitingForServerAction())
+        // Fruit drops need pickup even while seeds are available or /kho supplies them.
+        boolean harvestingFruit = autoHarvest != null && autoHarvest.isActive()
+            && (activeItem == Items.PUMPKIN_SEEDS || activeItem == Items.MELON_SEEDS);
+        if (activeItem != null && autoMove.get()
+            && (autoHarvest == null || !autoHarvest.isActive() || !autoHarvest.isWaitingForServerAction())
+            && (harvestingFruit || !autoWithdraw.get()
                 && (!findUsablePlantingItem(activeItem).found() || autoHarvest == null || !autoHarvest.isActive()
-                    || !autoHarvest.hasHarvestTargetInSearchRange())
-                && collectDroppedPlantingItem(autoHarvest)) return;
+                    || !autoHarvest.hasHarvestTargetInSearchRange()))
+            && collectDroppedFarmItem(autoHarvest)) return;
 
+        if (!autoWithdraw.get()) {
             if (activeItem != null && !findUsablePlantingItem(activeItem).found()) {
                 clearLootTarget();
                 stopPathing();
@@ -672,7 +678,7 @@ public class AutoPlant extends Module {
         return !isMatureCrop(state);
     }
 
-    private boolean collectDroppedPlantingItem(AutoHarvest autoHarvest) {
+    private boolean collectDroppedFarmItem(AutoHarvest autoHarvest) {
         ItemEntity item = lootTarget;
         if (!isLootCandidate(item)) {
             clearLootTarget();
@@ -745,7 +751,7 @@ public class AutoPlant extends Module {
 
     private boolean isLootCandidate(ItemEntity item) {
         if (item == null || !item.isAlive() || (item.getId() == ignoredLootId && ignoredLootTicks > 0)
-            || !isUsablePlantingStack(item.getStack(), activeItem)) return false;
+            || !(isUsablePlantingStack(item.getStack(), activeItem) || isHarvestedFruit(item.getStack()))) return false;
 
         Vec3d distance = new Vec3d(
             item.getX() - mc.player.getX(),
@@ -756,6 +762,11 @@ public class AutoPlant extends Module {
         return distance.x * distance.x + distance.z * distance.z <= horizontalRange * horizontalRange
             && Math.abs(distance.y) <= 4
             && hasRoomFor(item.getStack());
+    }
+
+    private boolean isHarvestedFruit(ItemStack stack) {
+        return activeItem == Items.PUMPKIN_SEEDS && stack.isOf(Items.PUMPKIN)
+            || activeItem == Items.MELON_SEEDS && (stack.isOf(Items.MELON_SLICE) || stack.isOf(Items.MELON));
     }
 
     private boolean hasRoomFor(ItemStack dropped) {
