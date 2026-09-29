@@ -5,6 +5,7 @@
 
 package meteordevelopment.meteorclient.mixin;
 
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.proxy.Socks4ProxyHandler;
@@ -20,8 +21,7 @@ import meteordevelopment.meteorclient.systems.proxies.Proxies;
 import meteordevelopment.meteorclient.systems.proxies.Proxy;
 import net.minecraft.network.ClientConnection;
 import net.minecraft.network.NetworkSide;
-import net.minecraft.network.handler.PacketEncoderException;
-import net.minecraft.network.handler.PacketSizeLogger;
+import net.minecraft.network.PacketEncoderException;
 import net.minecraft.network.listener.ClientPlayPacketListener;
 import net.minecraft.network.listener.PacketListener;
 import net.minecraft.network.packet.Packet;
@@ -44,9 +44,9 @@ public class ClientConnectionMixin {
     private static <T extends PacketListener> void onHandlePacket(Packet<T> packet, PacketListener listener, CallbackInfo info) {
         if (packet instanceof BundleS2CPacket bundle) {
             for (Iterator<Packet<ClientPlayPacketListener>> it = bundle.getPackets().iterator(); it.hasNext(); ) {
-                if (MeteorClient.EVENT_BUS.post(PacketEvent.Receive.get(it.next(), listener)).isCancelled()) it.remove();
+                if (MeteorClient.EVENT_BUS.post(PacketEvent.Receive.get(it.next())).isCancelled()) it.remove();
             }
-        } else if (MeteorClient.EVENT_BUS.post(PacketEvent.Receive.get(packet, listener)).isCancelled()) info.cancel();
+        } else if (MeteorClient.EVENT_BUS.post(PacketEvent.Receive.get(packet)).isCancelled()) info.cancel();
     }
 
     @Inject(method = "disconnect", at = @At("HEAD"))
@@ -59,8 +59,8 @@ public class ClientConnectionMixin {
         }
     }
 
-    @Inject(method = "connect(Ljava/net/InetSocketAddress;ZLnet/minecraft/network/ClientConnection;)Lio/netty/channel/ChannelFuture;", at = @At("HEAD"))
-    private static void onConnect(InetSocketAddress address, boolean useEpoll, ClientConnection connection, CallbackInfoReturnable<?> cir) {
+    @Inject(method = "connect", at = @At("HEAD"))
+    private static void onConnect(InetSocketAddress address, boolean useEpoll, CallbackInfoReturnable<?> cir) {
         MeteorClient.EVENT_BUS.post(ServerConnectEndEvent.get(address));
     }
 
@@ -84,7 +84,7 @@ public class ClientConnectionMixin {
     }
 
     @Inject(method = "addHandlers", at = @At("RETURN"))
-    private static void onAddHandlers(ChannelPipeline pipeline, NetworkSide side, PacketSizeLogger packetSizeLogger, CallbackInfo ci) {
+    private static void onAddHandlers(ChannelPipeline pipeline, NetworkSide side, CallbackInfo ci) {
         if (side != NetworkSide.CLIENTBOUND) return;
 
         Proxy proxy = Proxies.get().getEnabled();

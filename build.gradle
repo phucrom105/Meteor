@@ -1,15 +1,19 @@
 plugins {
     id "fabric-loom" version "1.5-SNAPSHOT"
     id "maven-publish"
-    id "com.github.johnrengelman.shadow" version "8.1.1"
+    id "com.github.johnrengelman.shadow" version "7.1.2"
 }
 
+sourceCompatibility = targetCompatibility = JavaVersion.VERSION_17
+
 archivesBaseName = project.archives_base_name
-def buildNumber = project.findProperty("build_number") ?: "local"
-version = "${project.minecraft_version}-${buildNumber}"
+version = project.mod_version + (project.hasProperty("devbuild") ? ("-" + project.findProperty("devbuild")) : "")
 group = project.maven_group
 
 repositories {
+    flatDir {
+        dirs "libs"
+    }
     maven {
         name = "meteor-maven"
         url = "https://maven.meteordev.org/releases"
@@ -25,10 +29,6 @@ repositories {
         content {
             includeGroup "maven.modrinth"
         }
-    }
-    maven {
-        name = "vram"
-        url = "https://maven.vram.io//"
     }
     mavenCentral()
 }
@@ -56,10 +56,9 @@ dependencies {
     modCompileOnly("maven.modrinth:lithium:${project.lithium_version}") { transitive = false }
     modCompileOnly("maven.modrinth:iris:${project.iris_version}") { transitive = false }
     //modCompileOnly("io.vram:canvas-fabric-mc119:1.0.+") { transitive = false } // TODO: 1.19.3
-    modCompileOnly("maven.modrinth:indium:${project.indium_version}") { transitive = false }
 
     // Baritone (https://github.com/MeteorDevelopment/baritone)
-    modCompileOnly "meteordevelopment:baritone:${project.baritone_version}-SNAPSHOT"
+    modInclude name: "baritone-api-fabric-1.10.5"
 
     // Libraries
     library "meteordevelopment:orbit:${project.orbit_version}"
@@ -68,7 +67,8 @@ dependencies {
     library "org.reflections:reflections:${project.reflections_version}"
     library("io.netty:netty-handler-proxy:${project.netty_version}") { transitive = false }
     library("io.netty:netty-codec-socks:${project.netty_version}") { transitive = false }
-    library "de.florianmichael:WaybackAuthLib:1.0.0"
+    library "com.github.LlamaLad7.MixinExtras:mixinextras-fabric:${project.mixin_extras_version}"
+    annotationProcessor "com.github.LlamaLad7.MixinExtras:mixinextras-fabric:${project.mixin_extras_version}"
 
     // Launch sub project
     shadow project(":launch")
@@ -87,10 +87,6 @@ afterEvaluate {
 shadowJar {
     configurations = [project.configurations.shadow]
 
-    // Keep the unremapped shaded JAR as an intermediate build artifact.
-    // The remapped JAR is the only distributable file that should remain in build/libs.
-    destinationDirectory = file("$buildDir/tmp/shadow")
-
     dependencies {
         exclude {
             it.moduleGroup == "org.slf4j"
@@ -99,33 +95,19 @@ shadowJar {
 }
 
 processResources {
-    def propertyMap = [
-        "version"          : project.version,
-        "devbuild"         : buildNumber,
-        "commit"           : project.findProperty("commit") ?: "",
-        "minecraft_version": project.minecraft_version,
-        "loader_version"   : project.loader_version
-    ]
-
-    inputs.properties(propertyMap)
     filesMatching("fabric.mod.json") {
-        expand(propertyMap)
+        expand "version": project.version,
+            "devbuild": project.findProperty("devbuild") ?: "",
+            "commit": project.findProperty("commit") ?: ""
     }
 }
 
 jar {
-    from("LICENSE") {
-        rename { "${it}_${archivesBaseName}" }
-    }
+    from "LICENSE"
 
     manifest {
         attributes("Main-Class": "meteordevelopment.meteorclient.Main")
     }
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
 }
 
 remapJar {
@@ -138,13 +120,33 @@ javadoc {
     options.encoding = "UTF-8"
 }
 
+task sourcesJar(type: Jar, dependsOn: classes) {
+    archiveClassifier.set("sources")
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar) {
+    archiveClassifier.set("javadoc")
+    from javadoc
+}
+
 publishing {
     publications {
-        mavenJava(MavenPublication) {
+        java(MavenPublication) {
             artifactId = "meteor-client"
-            version = "${project.minecraft_version}-SNAPSHOT"
+            version = project.hasProperty("devbuild") ? (project.mod_version + "-SNAPSHOT") : project.mod_version
 
-            from components.java
+            artifact(remapJar) {
+                builtBy remapJar
+            }
+
+            artifact(sourcesJar) {
+                builtBy remapSourcesJar
+            }
+
+            artifact(javadocJar) {
+                builtBy javadocJar
+            }
         }
     }
 

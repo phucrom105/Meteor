@@ -19,9 +19,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.text.Text;
@@ -251,7 +248,7 @@ public class AutoSell extends Module {
         statsResponseDeadline = now + secondsToNanos(statsTimeout.get());
         commandCooldownUntil = now + secondsToNanos(delay.get());
         lastCommand = Command.STATS;
-        ChatUtils.sendPlayerMsg("/kho stats");
+        mc.player.networkHandler.sendChatCommand("kho stats");
     }
 
     private boolean trySendPendingSell() {
@@ -261,7 +258,7 @@ public class AutoSell extends Module {
         commandCooldownUntil = now + secondsToNanos(delay.get());
         nextStatsAt = now + secondsToNanos(statsInterval.get());
         lastCommand = Command.SELLALL;
-        ChatUtils.sendPlayerMsg("/kho sellall");
+        mc.player.networkHandler.sendChatCommand("kho sellall");
         sellPending = false;
         triggerArmed = false;
         return true;
@@ -369,32 +366,7 @@ public class AutoSell extends Module {
     }
 
     private static List<String> stackLines(ItemStack stack) {
-        List<String> lines = new ArrayList<>();
-        lines.add(stack.getName().getString());
-
-        NbtCompound nbt = stack.getNbt();
-        if (nbt == null || !nbt.contains("display", NbtElement.COMPOUND_TYPE)) return lines;
-
-        NbtCompound display = nbt.getCompound("display");
-        if (display.contains("Name", NbtElement.STRING_TYPE)) {
-            addJsonText(lines, display.getString("Name"));
-        }
-
-        if (display.contains("Lore", NbtElement.LIST_TYPE)) {
-            NbtList lore = display.getList("Lore", NbtElement.STRING_TYPE);
-            for (NbtElement line : lore) addJsonText(lines, line.asString());
-        }
-
-        return lines;
-    }
-
-    private static void addJsonText(List<String> lines, String json) {
-        try {
-            Text text = Text.Serialization.fromJson(json);
-            if (text != null) lines.add(text.getString());
-        } catch (Exception ignored) {
-            lines.add(json);
-        }
+        return DavaItemText.lines(stack);
     }
 
     private static long parseAmount(String value) {

@@ -28,7 +28,6 @@ public class MixinPlugin implements IMixinConfigPlugin {
     private static boolean isCanvasPresent;
     private static boolean isLithiumPresent;
     public static boolean isIrisPresent;
-    private static boolean isIndiumPresent;
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -73,7 +72,6 @@ public class MixinPlugin implements IMixinConfigPlugin {
         isCanvasPresent = FabricLoader.getInstance().isModLoaded("canvas");
         isLithiumPresent = FabricLoader.getInstance().isModLoaded("lithium");
         isIrisPresent = FabricLoader.getInstance().isModLoaded("iris");
-        isIndiumPresent = FabricLoader.getInstance().isModLoaded("indium");
 
         loaded = true;
     }
@@ -102,9 +100,6 @@ public class MixinPlugin implements IMixinConfigPlugin {
         }
         else if (mixinClassName.startsWith(mixinPackage + ".lithium")) {
             return isLithiumPresent;
-        }
-        else if (mixinClassName.startsWith(mixinPackage + ".indium")) {
-            return isIndiumPresent;
         }
 
 

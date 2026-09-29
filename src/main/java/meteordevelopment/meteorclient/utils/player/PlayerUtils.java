@@ -5,15 +5,16 @@
 
 package meteordevelopment.meteorclient.utils.player;
 
+import baritone.api.BaritoneAPI;
+import baritone.api.utils.Rotation;
 import meteordevelopment.meteorclient.mixininterface.IVec3d;
-import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.NoFall;
 import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.entity.DamageUtils;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
+import meteordevelopment.meteorclient.utils.misc.BaritoneUtils;
 import meteordevelopment.meteorclient.utils.misc.text.TextUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.world.Dimension;
@@ -25,6 +26,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.EndCrystalEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.PotionItem;
+import net.minecraft.item.SwordItem;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
@@ -58,8 +60,9 @@ public class PlayerUtils {
     public static Vec3d getHorizontalVelocity(double bps) {
         float yaw = mc.player.getYaw();
 
-        if (PathManagers.get().isPathing()) {
-            yaw = PathManagers.get().getTargetYaw();
+        if (BaritoneAPI.getProvider().getPrimaryBaritone().getPathingBehavior().isPathing()) {
+            Rotation target = BaritoneUtils.getTarget();
+            if (target != null) yaw = target.getYaw();
         }
 
         Vec3d forward = Vec3d.fromPolar(0, yaw);
@@ -178,24 +181,26 @@ public class PlayerUtils {
         return air < 2;
     }
 
-    public static float possibleHealthReductions() {
+    public static double possibleHealthReductions() {
         return possibleHealthReductions(true, true);
     }
 
-    public static float possibleHealthReductions(boolean entities, boolean fall) {
-        float damageTaken = 0;
+    public static double possibleHealthReductions(boolean entities, boolean fall) {
+        double damageTaken = 0;
 
         if (entities) {
             for (Entity entity : mc.world.getEntities()) {
                 // Check for end crystals
-                if (entity instanceof EndCrystalEntity) {
-                    float crystalDamage = DamageUtils.crystalDamage(mc.player, entity.getPos());
-                    if (crystalDamage > damageTaken) damageTaken = crystalDamage;
+                if (entity instanceof EndCrystalEntity && damageTaken < DamageUtils.crystalDamage(mc.player, entity.getPos())) {
+                    damageTaken = DamageUtils.crystalDamage(mc.player, entity.getPos());
                 }
                 // Check for players holding swords
-                else if (entity instanceof PlayerEntity player && !Friends.get().isFriend(player) && isWithin(entity, 5)) {
-                    float attackDamage = DamageUtils.getAttackDamage(player, mc.player);
-                    if (attackDamage > damageTaken) damageTaken = attackDamage;
+                else if (entity instanceof PlayerEntity && damageTaken < DamageUtils.getSwordDamage((PlayerEntity) entity, true)) {
+                    if (!Friends.get().isFriend((PlayerEntity) entity) && isWithin(entity, 5)) {
+                        if (((PlayerEntity) entity).getActiveItem().getItem() instanceof SwordItem) {
+                            damageTaken = DamageUtils.getSwordDamage((PlayerEntity) entity, true);
+                        }
+                    }
                 }
             }
 
@@ -205,9 +210,8 @@ public class PlayerUtils {
                     BlockPos bp = blockEntity.getPos();
                     Vec3d pos = new Vec3d(bp.getX(), bp.getY(), bp.getZ());
 
-                    if (blockEntity instanceof BedBlockEntity) {
-                        float explosionDamage = DamageUtils.bedDamage(mc.player, pos);
-                        if (explosionDamage > damageTaken) damageTaken = explosionDamage;
+                    if (blockEntity instanceof BedBlockEntity && damageTaken < DamageUtils.bedDamage(mc.player, pos)) {
+                        damageTaken = DamageUtils.bedDamage(mc.player, pos);
                     }
                 }
             }
@@ -216,7 +220,7 @@ public class PlayerUtils {
         // Check for fall distance with water check
         if (fall) {
             if (!Modules.get().isActive(NoFall.class) && mc.player.fallDistance > 3) {
-                float damage = DamageUtils.fallDamage(mc.player);
+                double damage = mc.player.fallDistance * 0.5;
 
                 if (damage > damageTaken && !EntityUtils.isAboveWater(mc.player)) {
                     damageTaken = damage;
@@ -225,10 +229,6 @@ public class PlayerUtils {
         }
 
         return damageTaken;
-    }
-
-    public static double distance(double x1, double y1, double z1, double x2, double y2, double z2) {
-        return Math.sqrt(squaredDistance(x1, y1, z1, x2, y2, z2));
     }
 
     public static double distanceTo(Entity entity) {
@@ -260,9 +260,9 @@ public class PlayerUtils {
     }
 
     public static double squaredDistance(double x1, double y1, double z1, double x2, double y2, double z2) {
-        double f = x1 - x2;
-        double g = y1 - y2;
-        double h = z1 - z2;
+        float f = (float) (x1 - x2);
+        float g = (float) (y1 - y2);
+        float h = (float) (z1 - z2);
         return org.joml.Math.fma(f, f, org.joml.Math.fma(g, g, h * h));
     }
 
@@ -347,7 +347,7 @@ public class PlayerUtils {
         return playerListEntry.getGameMode();
     }
 
-    public static float getTotalHealth() {
+    public static double getTotalHealth() {
         return mc.player.getHealth() + mc.player.getAbsorptionAmount();
     }
 

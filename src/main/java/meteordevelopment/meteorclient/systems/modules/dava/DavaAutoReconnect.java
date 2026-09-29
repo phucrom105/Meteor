@@ -33,7 +33,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
-import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
+import net.minecraft.client.gui.screen.ConnectScreen;
 import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.entity.player.PlayerInventory;
@@ -633,47 +633,11 @@ public class DavaAutoReconnect extends Module {
     }
 
     private static String stackText(ItemStack stack) {
-        StringBuilder text = new StringBuilder(stack.getName().getString());
-
-        NbtCompound nbt = stack.getNbt();
-        if (nbt == null || !nbt.contains("display", NbtElement.COMPOUND_TYPE)) return text.toString();
-
-        NbtCompound display = nbt.getCompound("display");
-        if (display.contains("Name", NbtElement.STRING_TYPE)) {
-            appendJsonText(text, display.getString("Name"));
-        }
-
-        if (display.contains("Lore", NbtElement.LIST_TYPE)) {
-            NbtList lore = display.getList("Lore", NbtElement.STRING_TYPE);
-            for (NbtElement line : lore) appendJsonText(text, line.asString());
-        }
-
-        return text.toString();
+        return String.join(" ", DavaItemText.lines(stack));
     }
 
     private static String menuLabel(ItemStack stack) {
-        NbtCompound nbt = stack.getNbt();
-        if (nbt != null && nbt.contains("display", NbtElement.COMPOUND_TYPE)) {
-            NbtCompound display = nbt.getCompound("display");
-            if (display.contains("Name", NbtElement.STRING_TYPE)) {
-                try {
-                    Text customName = Text.Serialization.fromJson(display.getString("Name"));
-                    if (customName != null) return customName.getString();
-                } catch (Exception ignored) {
-                }
-            }
-        }
-
         return stack.getName().getString();
-    }
-
-    private static void appendJsonText(StringBuilder text, String json) {
-        try {
-            Text line = Text.Serialization.fromJson(json);
-            if (line != null) text.append(' ').append(line.getString());
-        } catch (Exception ignored) {
-            text.append(' ').append(json);
-        }
     }
 
     private static boolean isLoginPrompt(String message) {
@@ -736,7 +700,7 @@ public class DavaAutoReconnect extends Module {
             .replace("{token}", loginSecret.get())
             .replace("{username}", mc.getSession().getUsername());
 
-        ChatUtils.sendPlayerMsg(command);
+        mc.player.networkHandler.sendChatCommand(command.startsWith("/") ? command.substring(1) : command);
         loginCooldown = 40;
     }
 
@@ -784,7 +748,7 @@ public class DavaAutoReconnect extends Module {
     public DavaAutoReconnect fromTag(NbtCompound tag) {
         super.fromTag(tag);
 
-        String encrypted = tag.contains(SECRET_TAG, NbtElement.STRING_TYPE) ? tag.getString(SECRET_TAG) : "";
+        String encrypted = tag.getString(SECRET_TAG);
         if (!encrypted.isBlank()) {
             String secret = decryptSecret(encrypted);
             if (!secret.isBlank()) loginSecret.set(secret);
@@ -794,18 +758,14 @@ public class DavaAutoReconnect extends Module {
     }
 
     private static void stripPlaintextSecret(NbtCompound tag) {
-        NbtCompound settingsTag = tag.contains("settings", NbtElement.COMPOUND_TYPE)
-            ? tag.getCompound("settings") : new NbtCompound();
-        NbtList groups = settingsTag.contains("groups", NbtElement.LIST_TYPE)
-            ? settingsTag.getList("groups", NbtElement.COMPOUND_TYPE) : new NbtList();
+        NbtCompound settingsTag = tag.getCompound("settings");
+        NbtList groups = settingsTag.getList("groups", NbtElement.COMPOUND_TYPE);
 
         for (NbtElement groupElement : groups) {
             if (!(groupElement instanceof NbtCompound group)) continue;
 
-            NbtList settings = group.contains("settings", NbtElement.LIST_TYPE)
-                ? group.getList("settings", NbtElement.COMPOUND_TYPE) : new NbtList();
+            NbtList settings = group.getList("settings", NbtElement.COMPOUND_TYPE);
             settings.removeIf(settingElement -> settingElement instanceof NbtCompound setting
-                && setting.contains("name", NbtElement.STRING_TYPE)
                 && setting.getString("name").equals("password-token"));
         }
     }

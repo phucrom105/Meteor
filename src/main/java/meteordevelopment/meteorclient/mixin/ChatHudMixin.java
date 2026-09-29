@@ -76,8 +76,6 @@ public abstract class ChatHudMixin implements IChatHud {
     @ModifyExpressionValue(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V", at = @At(value = "NEW", target = "(ILnet/minecraft/text/OrderedText;Lnet/minecraft/client/gui/hud/MessageIndicator;Z)Lnet/minecraft/client/gui/hud/ChatHudLine$Visible;"))
     private ChatHudLine.Visible onAddMessage_modifyChatHudLineVisible(ChatHudLine.Visible line, @Local(ordinal = 2) int j) {
         IMessageHandler handler = (IMessageHandler) client.getMessageHandler();
-        if (handler == null) return line;
-
         IChatHudLineVisible meteorLine = (IChatHudLineVisible) (Object) line;
 
         meteorLine.meteor$setSender(handler.meteor$getSender());
@@ -89,8 +87,6 @@ public abstract class ChatHudMixin implements IChatHud {
     @ModifyExpressionValue(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V", at = @At(value = "NEW", target = "(ILnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;Lnet/minecraft/client/gui/hud/MessageIndicator;)Lnet/minecraft/client/gui/hud/ChatHudLine;"))
     private ChatHudLine onAddMessage_modifyChatHudLine(ChatHudLine line) {
         IMessageHandler handler = (IMessageHandler) client.getMessageHandler();
-        if (handler == null) return line;
-
         ((IChatHudLine) (Object) line).meteor$setSender(handler.meteor$getSender());
         return line;
     }
@@ -122,19 +118,19 @@ public abstract class ChatHudMixin implements IChatHud {
         }
     }
 
-    //modify max lengths for messages and visible messages
-    @ModifyExpressionValue(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V", at = @At(value = "CONSTANT", args = "intValue=100"))
-    private int maxLength(int size) {
-        if (Modules.get() == null || !getBetterChat().isLongerChat()) return size;
-
-        return size + betterChat.getExtraChatLines();
+    @ModifyExpressionValue(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
+        slice = @Slice(from = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/hud/ChatHud;visibleMessages:Ljava/util/List;")), at = @At(value = "INVOKE", target = "Ljava/util/List;size()I"))
+    private int addMessageListSizeProxy(int size) {
+        BetterChat betterChat = getBetterChat();
+        if (betterChat.isLongerChat() && betterChat.getChatLength() >= 100) return size - betterChat.getChatLength();
+        return size;
     }
 
     // Player Heads
 
     @ModifyExpressionValue(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/math/MathHelper;ceil(F)I"))
     private int onRender_modifyWidth(int width) {
-        return getBetterChat().modifyChatWidth(width);
+        return betterChat.modifyChatWidth(width);
     }
 
     @ModifyReceiver(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/DrawContext;drawTextWithShadow(Lnet/minecraft/client/font/TextRenderer;Lnet/minecraft/text/OrderedText;III)I"))
@@ -155,20 +151,16 @@ public abstract class ChatHudMixin implements IChatHud {
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/ChatHud;isChatFocused()Z"), locals = LocalCapture.CAPTURE_FAILSOFT)
     private void onBreakChatMessageLines(Text message, MessageSignatureData signature, int ticks, MessageIndicator indicator, boolean refresh, CallbackInfo ci, int i, List<OrderedText> list) {
-        if (Modules.get() == null) return; // baritone calls addMessage before we initialise
-
         getBetterChat().lines.add(0, list.size());
     }
 
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
         slice = @Slice(from = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/hud/ChatHud;messages:Ljava/util/List;")), at = @At(value = "INVOKE", target = "Ljava/util/List;remove(I)Ljava/lang/Object;"))
     private void onRemoveMessage(Text message, MessageSignatureData signature, int ticks, MessageIndicator indicator, boolean refresh, CallbackInfo ci) {
-        if (Modules.get() == null) return;
+        BetterChat betterChat = getBetterChat();
+        int size = betterChat.lines.size() - (betterChat.isLongerChat() && betterChat.getChatLength() >= 100 ? betterChat.getChatLength() : 0);
 
-        int extra = getBetterChat().isLongerChat() ? getBetterChat().getExtraChatLines() : 0;
-        int size = betterChat.lines.size();
-
-        while (size > 100 + extra) {
+        while (size > 100) {
             betterChat.lines.removeInt(size - 1);
             size--;
         }

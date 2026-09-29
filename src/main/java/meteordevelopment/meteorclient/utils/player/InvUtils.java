@@ -155,7 +155,7 @@ public class InvUtils {
         else if (!swapBack) previousSlot = -1;
 
         mc.player.getInventory().selectedSlot = slot;
-        ((IClientPlayerInteractionManager) mc.interactionManager).meteor$syncSelected();
+        ((IClientPlayerInteractionManager) mc.interactionManager).syncSelected();
         return true;
     }
 

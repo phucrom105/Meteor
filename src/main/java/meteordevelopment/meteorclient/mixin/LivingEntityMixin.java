@@ -12,7 +12,7 @@ import meteordevelopment.meteorclient.events.entity.player.CanWalkOnFluidEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFlightModes;
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
-import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.modes.Bounce;
+import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.modes.Recast;
 import meteordevelopment.meteorclient.systems.modules.player.OffhandCrash;
 import meteordevelopment.meteorclient.systems.modules.player.PotionSpoof;
 import meteordevelopment.meteorclient.systems.modules.render.HandView;
@@ -54,7 +54,7 @@ public abstract class LivingEntityMixin extends Entity {
     @Inject(method = "damage", at = @At("HEAD"))
     private void onDamageHead(DamageSource source, float amount, CallbackInfoReturnable<Boolean> info) {
         if (Utils.canUpdate() && getWorld().isClient)
-            MeteorClient.EVENT_BUS.post(DamageEvent.get((LivingEntity) (Object) this, source));
+            MeteorClient.EVENT_BUS.post(DamageEvent.get((LivingEntity) (Object) this, source, amount));
     }
 
     @ModifyReturnValue(method = "canWalkOnFluid", at = @At("RETURN"))
@@ -117,8 +117,8 @@ public abstract class LivingEntityMixin extends Entity {
     public void recastOnLand(CallbackInfoReturnable<Boolean> cir) {
         boolean elytra = cir.getReturnValue();
         ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
-        if (previousElytra && !elytra && elytraFly.isActive() && elytraFly.flightMode.get() == ElytraFlightModes.Bounce) {
-            cir.setReturnValue(Bounce.recastElytra(mc.player));
+        if (previousElytra && !elytra && elytraFly.isActive() && elytraFly.flightMode.get() == ElytraFlightModes.Recast) {
+            cir.setReturnValue(Recast.recastElytra(mc.player));
         }
         previousElytra = elytra;
     }

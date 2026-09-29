@@ -60,9 +60,6 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
     @Final
     private ClientPlayNetworkHandler networkHandler;
 
-    @Shadow
-    public abstract boolean breakBlock(BlockPos pos);
-
     @Inject(method = "clickSlot", at = @At("HEAD"), cancellable = true)
     private void onClickSlot(int syncId, int slotId, int button, SlotActionType actionType, PlayerEntity player, CallbackInfo info) {
         if (actionType == SlotActionType.THROW && slotId >= 0 && slotId < player.currentScreenHandler.slots.size()) {
@@ -111,7 +108,7 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
             if (!sm.instamine() || !sm.filter(state.getBlock())) return;
 
             if (state.calcBlockBreakingDelta(mc.player, mc.world, blockPos) > 0.5f) {
-                breakBlock(blockPos);
+                mc.world.breakBlock(blockPos, true, mc.player);
                 networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, blockPos, direction));
                 networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, blockPos, direction));
                 info.setReturnValue(true);
@@ -170,7 +167,7 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
     @Redirect(method = "method_41930", at = @At(value = "INVOKE", target = "Lnet/minecraft/block/BlockState;calcBlockBreakingDelta(Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/world/BlockView;Lnet/minecraft/util/math/BlockPos;)F"))
     private float deltaChange(BlockState blockState, PlayerEntity player, BlockView world, BlockPos pos) {
         float delta = blockState.calcBlockBreakingDelta(player, world, pos);
-        if (Modules.get().get(BreakDelay.class).preventInstaBreak() && delta >= 1) {
+        if (Modules.get().get(BreakDelay.class).noInstaBreak.get() && delta >= 1) {
             BlockBreakingCooldownEvent event = MeteorClient.EVENT_BUS.post(BlockBreakingCooldownEvent.get(blockBreakingCooldown));
             blockBreakingCooldown = event.cooldown;
             return 0;
@@ -180,7 +177,13 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
 
     @Inject(method = "breakBlock", at = @At("HEAD"), cancellable = true)
     private void onBreakBlock(BlockPos blockPos, CallbackInfoReturnable<Boolean> info) {
-        if (MeteorClient.EVENT_BUS.post(BreakBlockEvent.get(blockPos)).isCancelled()) info.setReturnValue(false);
+        final BreakBlockEvent event = BreakBlockEvent.get(blockPos);
+        MeteorClient.EVENT_BUS.post(event);
+
+        if (event.isCancelled()) {
+            info.setReturnValue(false);
+            info.cancel();
+        }
     }
 
     @Inject(method = "interactItem", at = @At("HEAD"), cancellable = true)
@@ -203,7 +206,7 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
     }
 
     @Override
-    public void meteor$syncSelected() {
+    public void syncSelected() {
         syncSelectedSlot();
     }
 }

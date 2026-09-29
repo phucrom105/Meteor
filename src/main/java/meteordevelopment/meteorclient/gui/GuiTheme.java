@@ -115,8 +115,14 @@ public abstract class GuiTheme implements ISerializable<GuiTheme> {
 
     public abstract <T> WDropdown<T> dropdown(T[] values, T value);
     public <T extends Enum<?>> WDropdown<T> dropdown(T value) {
-        Class<?> klass = value.getDeclaringClass();
-        T[] values = (T[]) klass.getEnumConstants();
+        Class<?> klass = value.getClass();
+        T[] values = null;
+        try {
+            values = (T[]) klass.getDeclaredMethod("values").invoke(null);
+        } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+            e.printStackTrace();
+        }
+
         return dropdown(values, value);
     }
 

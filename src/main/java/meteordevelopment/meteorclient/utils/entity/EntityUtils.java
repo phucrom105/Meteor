@@ -48,11 +48,7 @@ public class EntityUtils {
         return type != EntityType.AREA_EFFECT_CLOUD && type != EntityType.ARROW && type != EntityType.FALLING_BLOCK && type != EntityType.FIREWORK_ROCKET && type != EntityType.ITEM && type != EntityType.LLAMA_SPIT && type != EntityType.SPECTRAL_ARROW && type != EntityType.ENDER_PEARL && type != EntityType.EXPERIENCE_BOTTLE && type != EntityType.POTION && type != EntityType.TRIDENT && type != EntityType.LIGHTNING_BOLT && type != EntityType.FISHING_BOBBER && type != EntityType.EXPERIENCE_ORB && type != EntityType.EGG;
     }
 
-    public static boolean isRideable(EntityType<?> type) {
-        return type == EntityType.MINECART || type == EntityType.BOAT || type == EntityType.CAMEL || type == EntityType.DONKEY || type == EntityType.HORSE || type == EntityType.LLAMA || type == EntityType.MULE || type == EntityType.PIG || type == EntityType.SKELETON_HORSE || type == EntityType.STRIDER || type == EntityType.ZOMBIE_HORSE;
-    }
-
-    public static float getTotalHealth(LivingEntity target) {
+    public static float getTotalHealth(PlayerEntity target) {
         return target.getHealth() + target.getAbsorptionAmount();
     }
 
@@ -116,7 +112,7 @@ public class EntityUtils {
     public static BlockPos getCityBlock(PlayerEntity player) {
         if (player == null) return null;
 
-        double bestDistanceSquared = 6 * 6;
+        double bestDistance = 6;
         Direction bestDirection = null;
 
         for (Direction direction : Direction.HORIZONTAL) {
@@ -126,9 +122,9 @@ public class EntityUtils {
             if (block != Blocks.OBSIDIAN && block != Blocks.NETHERITE_BLOCK && block != Blocks.CRYING_OBSIDIAN
             && block != Blocks.RESPAWN_ANCHOR && block != Blocks.ANCIENT_DEBRIS) continue;
 
-            double testDistanceSquared = PlayerUtils.squaredDistanceTo(testPos);
-            if (testDistanceSquared < bestDistanceSquared) {
-                bestDistanceSquared = testDistanceSquared;
+            double testDistance = PlayerUtils.distanceTo(testPos);
+            if (testDistance < bestDistance) {
+                bestDistance = testDistance;
                 bestDirection = direction;
             }
         }
@@ -139,7 +135,7 @@ public class EntityUtils {
 
     public static String getName(Entity entity) {
         if (entity == null) return null;
-        if (entity instanceof PlayerEntity) return entity.getName().getString();
+        if (entity instanceof PlayerEntity) return entity.getEntityName();
         return entity.getType().getName().getString();
     }
 

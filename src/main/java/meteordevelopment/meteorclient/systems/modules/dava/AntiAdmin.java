@@ -655,7 +655,7 @@ public class AntiAdmin extends Module {
 
     private boolean hasAdminRole(PlayerEntity player) {
         String name = player.getGameProfile().getName();
-        Team team = player.getScoreboardTeam();
+        Team team = player.getScoreboardTeam() instanceof Team scoreboardTeam ? scoreboardTeam : null;
         if (team == null) team = getScoreboardTeam(name);
 
         return hasAdminRole(name, player.getDisplayName(), team);
@@ -675,7 +675,7 @@ public class AntiAdmin extends Module {
 
     private Team getScoreboardTeam(String playerName) {
         if (mc.world == null || mc.world.getScoreboard() == null) return null;
-        return mc.world.getScoreboard().getScoreHolderTeam(playerName);
+        return mc.world.getScoreboard().getPlayerTeam(playerName);
     }
 
     private boolean containsConfiguredRole(String decorations, String playerName) {

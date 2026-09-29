@@ -18,7 +18,6 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.NameProtect;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
-import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
@@ -160,14 +159,6 @@ public class Nametags extends Module {
         .name("ignore-empty-slots")
         .description("Doesn't add spacing where an empty item stack would be.")
         .defaultValue(true)
-        .visible(displayItems::get)
-        .build()
-    );
-
-    private final Setting<Durability> itemDurability = sgPlayers.add(new EnumSetting.Builder<Durability>()
-        .name("durability")
-        .description("Displays item durability as either a total, percentage, or neither.")
-        .defaultValue(Durability.None)
         .visible(displayItems::get)
         .build()
     );
@@ -400,8 +391,8 @@ public class Nametags extends Module {
         String name;
         Color nameColor = PlayerUtils.getPlayerColor(player, this.nameColor.get());
 
-        if (player == mc.player) name = Modules.get().get(NameProtect.class).getName(player.getName().getString());
-        else name = player.getName().getString();
+        if (player == mc.player) name = Modules.get().get(NameProtect.class).getName(player.getEntityName());
+        else name = player.getEntityName();
 
         // Health
         float absorption = player.getAbsorptionAmount();
@@ -507,20 +498,6 @@ public class Nametags extends Module {
 
                 RenderUtils.drawItem(event.drawContext, stack, (int) x, (int) y, 2, true);
 
-                if (stack.isDamageable() && itemDurability.get() != Durability.None) {
-                    text.begin(0.75, false, true);
-
-                    String damageText = switch (itemDurability.get()) {
-                        case Percentage -> String.format("%.0f%%", ((stack.getMaxDamage() - stack.getDamage()) * 100f) / (float) stack.getMaxDamage());
-                        case Total -> Integer.toString(stack.getMaxDamage() - stack.getDamage());
-                        default -> "err";
-                    };
-                    Color damageColor = new Color(stack.getItemBarColor());
-
-                    text.render(damageText, (int) x, (int) y, damageColor.a(255), true);
-                    text.end();
-                }
-
                 if (maxEnchantCount > 0 && displayEnchants.get()) {
                     text.begin(0.5 * enchantTextScale.get(), false, true);
 
@@ -573,7 +550,7 @@ public class Nametags extends Module {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
 
-        String name = Names.get(stack);
+        String name = stack.getName().getString();
         String count = " x" + stack.getCount();
 
         double nameWidth = text.getWidth(name, shadow);
@@ -681,12 +658,6 @@ public class Nametags extends Module {
     public enum Position {
         Above,
         OnTop
-    }
-
-    public enum Durability {
-        None,
-        Total,
-        Percentage
     }
 
     public enum DistanceColorMode {

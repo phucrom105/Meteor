@@ -12,7 +12,6 @@ import meteordevelopment.meteorclient.mixin.PlayerMoveC2SPacketAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.entity.Entity;
@@ -29,7 +28,7 @@ public class Flight extends Module {
         .description("The mode for Flight.")
         .defaultValue(Mode.Abilities)
         .onChanged(mode -> {
-            if (!isActive() || !Utils.canUpdate()) return;
+            if (!isActive()) return;
             abilitiesOff();
         })
         .build()
@@ -47,14 +46,6 @@ public class Flight extends Module {
         .name("vertical-speed-match")
         .description("Matches your vertical speed to your horizontal speed, otherwise uses vanilla ratio.")
         .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> noSneak = sgGeneral.add(new BoolSetting.Builder()
-        .name("no-sneak")
-        .description("Prevents you from sneaking while flying.")
-        .defaultValue(false)
-        .visible(() -> mode.get() == Mode.Velocity)
         .build()
     );
 
@@ -154,17 +145,15 @@ public class Flight extends Module {
 
         switch (mode.get()) {
             case Velocity -> {
+                // TODO: deal with underwater movement, find a way to "spoof" not being in water
+
                 mc.player.getAbilities().flying = false;
                 mc.player.setVelocity(0, 0, 0);
-                Vec3d playerVelocity = mc.player.getVelocity();
+                Vec3d initialVelocity = mc.player.getVelocity();
                 if (mc.options.jumpKey.isPressed())
-                    playerVelocity = playerVelocity.add(0, speed.get() * (verticalSpeedMatch.get() ? 10f : 5f), 0);
+                    mc.player.setVelocity(initialVelocity.add(0, speed.get() * (verticalSpeedMatch.get() ? 10f : 5f), 0));
                 if (mc.options.sneakKey.isPressed())
-                    playerVelocity = playerVelocity.subtract(0, speed.get() * (verticalSpeedMatch.get() ? 10f : 5f), 0);
-                mc.player.setVelocity(playerVelocity);
-                if (noSneak.get()) {
-                    mc.player.setOnGround(false);
-                }
+                    mc.player.setVelocity(initialVelocity.subtract(0, speed.get() * (verticalSpeedMatch.get() ? 10f : 5f), 0));
             }
             case Abilities -> {
                 if (mc.player.isSpectator()) return;
@@ -248,10 +237,6 @@ public class Flight extends Module {
 
         if (!isActive() || mode.get() != Mode.Velocity) return -1;
         return speed.get().floatValue() * (mc.player.isSprinting() ? 15f : 10f);
-    }
-
-    public boolean noSneak() {
-        return isActive() && mode.get() == Mode.Velocity && noSneak.get();
     }
 
     public enum Mode {

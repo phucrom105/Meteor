@@ -22,7 +22,6 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.misc.MeteorIdentifier;
-import meteordevelopment.meteorclient.utils.misc.text.MeteorClickEvent;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
@@ -148,8 +147,8 @@ public class BetterChat extends Module {
         .name("extra-lines")
         .description("The amount of extra chat lines.")
         .defaultValue(1000)
-        .min(0)
-        .sliderRange(0, 1000)
+        .min(100)
+        .sliderRange(100, 1000)
         .visible(longerChatHistory::get)
         .build()
     );
@@ -220,7 +219,6 @@ public class BetterChat extends Module {
 
     private static final Pattern antiSpamRegex = Pattern.compile(" \\(([0-9]+)\\)$");
     private static final Pattern timestampRegex = Pattern.compile("^(<[0-9]{2}:[0-9]{2}>\\s)");
-    private static final Pattern usernameRegex = Pattern.compile("^(?:<[0-9]{2}:[0-9]{2}>\\s)?<(.*?)>.*");
 
     private final Char2CharMap SMALL_CAPS = new Char2CharOpenHashMap();
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm");
@@ -396,8 +394,7 @@ public class BetterChat extends Module {
         int startOffset = 0;
 
         try {
-            Matcher m = TIMESTAMP_REGEX.matcher(text);
-            if (m.find()) startOffset = m.end() + 1;
+            startOffset = TIMESTAMP_REGEX.matcher(text).end();
         }
         catch (IllegalStateException ignored) {}
 
@@ -416,7 +413,7 @@ public class BetterChat extends Module {
         PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(sender.getId());
         if (entry == null) return;
 
-        Identifier skin = entry.getSkinTextures().texture();
+        Identifier skin = entry.getSkinTexture();
 
         context.drawTexture(skin, 0, y, 8, 8, 8, 8, 8, 8, 64, 64);
         context.drawTexture(skin, 0, y, 8, 8, 40, 8, 8, 8, 64, 64);
@@ -427,10 +424,11 @@ public class BetterChat extends Module {
 
         // If the packet did not contain a sender field then try to get the sender from the message
         if (sender == null) {
-            Matcher usernameMatcher = usernameRegex.matcher(text);
+            int openingI = text.indexOf('<');
+            int closingI = text.indexOf('>');
 
-            if (usernameMatcher.matches()) {
-                String username = usernameMatcher.group(1);
+            if (openingI != -1 && closingI != -1 && closingI > openingI) {
+                String username = text.substring(openingI + 1, closingI);
 
                 PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(username);
                 if (entry != null) sender = entry.getProfile();
@@ -519,7 +517,7 @@ public class BetterChat extends Module {
 
         sendButton.setStyle(sendButton.getStyle()
             .withFormatting(Formatting.DARK_RED)
-            .withClickEvent(new MeteorClickEvent(
+            .withClickEvent(new ClickEvent(
                 ClickEvent.Action.RUN_COMMAND,
                 Commands.get("say").toString(message)
             ))
@@ -542,7 +540,7 @@ public class BetterChat extends Module {
 
     public boolean keepHistory() { return isActive() && keepHistory.get(); }
 
-    public int getExtraChatLines() {
+    public int getChatLength() {
         return longerChatLines.get();
     }
 }

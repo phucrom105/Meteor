@@ -9,4 +9,5 @@ pluginManagement {
     }
 }
 
+rootProject.name = "Meteor-1.20.1"
 include "launch"

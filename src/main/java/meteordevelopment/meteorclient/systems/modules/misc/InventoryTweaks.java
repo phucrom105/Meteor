@@ -263,7 +263,7 @@ public class InventoryTweaks extends Module {
     private void onKey(KeyEvent event) {
         if (event.action != KeyAction.Press) return;
 
-        if (sortingKey.get().matches(true, event.key, event.modifiers)) {
+        if (sortingKey.get().matches(true, event.key)) {
             if (sort()) event.cancel();
         }
     }
@@ -272,7 +272,7 @@ public class InventoryTweaks extends Module {
     private void onMouseButton(MouseButtonEvent event) {
         if (event.action != KeyAction.Press) return;
 
-        if (sortingKey.get().matches(false, event.button, 0)) {
+        if (sortingKey.get().matches(false, event.button)) {
             if (sort()) event.cancel();
         }
     }

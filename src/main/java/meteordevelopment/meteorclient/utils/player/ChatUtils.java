@@ -5,13 +5,11 @@
 
 package meteordevelopment.meteorclient.utils.player;
 
-import com.mojang.brigadier.StringReader;
+import baritone.api.BaritoneAPI;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.mixininterface.IChatHud;
-import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.utils.PostInit;
-import meteordevelopment.meteorclient.utils.misc.text.MeteorClickEvent;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Pair;
@@ -32,7 +30,7 @@ public class ChatUtils {
 
     @PostInit
     public static void init() {
-        PREFIX = Text.empty()
+        PREFIX = Text.literal("")
             .setStyle(Style.EMPTY.withFormatting(Formatting.GRAY))
             .append("[")
             .append(Text.literal("Meteor").setStyle(Style.EMPTY.withColor(TextColor.fromRgb(MeteorClient.ADDON.color.getPacked()))))
@@ -123,19 +121,19 @@ public class ChatUtils {
     }
 
     public static void sendMsg(int id, @Nullable String prefixTitle, @Nullable Formatting prefixColor, Formatting messageColor, String messageContent, Object... args) {
-        MutableText message = formatMsg(String.format(messageContent, args), messageColor);
-        sendMsg(id, prefixTitle, prefixColor, message);
+        sendMsg(id, prefixTitle, prefixColor, formatMsg(messageContent, messageColor, args), messageColor);
     }
 
     public static void sendMsg(int id, @Nullable String prefixTitle, @Nullable Formatting prefixColor, String messageContent, Formatting messageColor) {
-        MutableText message = formatMsg(messageContent, messageColor);
+        MutableText message = Text.literal(messageContent);
+        message.setStyle(message.getStyle().withFormatting(messageColor));
         sendMsg(id, prefixTitle, prefixColor, message);
     }
 
     public static void sendMsg(int id, @Nullable String prefixTitle, @Nullable Formatting prefixColor, Text msg) {
         if (mc.world == null) return;
 
-        MutableText message = Text.empty();
+        MutableText message = Text.literal("");
         message.append(getPrefix());
         if (prefixTitle != null) message.append(getCustomPrefix(prefixTitle, prefixColor));
         message.append(msg);
@@ -146,7 +144,7 @@ public class ChatUtils {
     }
 
     private static MutableText getCustomPrefix(String prefixTitle, Formatting prefixColor) {
-        MutableText prefix = Text.empty();
+        MutableText prefix = Text.literal("");
         prefix.setStyle(prefix.getStyle().withFormatting(Formatting.GRAY));
 
         prefix.append("[");
@@ -198,64 +196,30 @@ public class ChatUtils {
         return PREFIX;
     }
 
-    private static MutableText formatMsg(String message, Formatting defaultColor) {
-        StringReader reader = new StringReader(message);
-        MutableText text = Text.empty();
-        Style style = Style.EMPTY.withFormatting(defaultColor);
-        StringBuilder result = new StringBuilder();
-        boolean formatting = false;
-        while (reader.canRead()) {
-            char c = reader.read();
-            if (c == '(') {
-                text.append(Text.literal(result.toString()).setStyle(style));
-                result.setLength(0);
-                result.append(c);
-                formatting = true;
-            } else {
-                result.append(c);
+    private static String formatMsg(String format, Formatting defaultColor, Object... args) {
+        String msg = String.format(format, args);
+        msg = msg.replace("(default)", defaultColor.toString());
+        msg = msg.replace("(highlight)", Formatting.WHITE.toString());
+        msg = msg.replace("(underline)", Formatting.UNDERLINE.toString());
 
-                if (formatting && c == ')') {
-                    switch (result.toString()) {
-                        case "(default)" -> {
-                            style = style.withFormatting(defaultColor);
-                            result.setLength(0);
-                        }
-                        case "(highlight)" -> {
-                            style = style.withFormatting(Formatting.WHITE);
-                            result.setLength(0);
-                        }
-                        case "(underline)" -> {
-                            style = style.withFormatting(Formatting.UNDERLINE);
-                            result.setLength(0);
-                        }
-                    }
-                    formatting = false;
-                }
-            }
-        }
-
-        if (!result.isEmpty()) text.append(Text.literal(result.toString()).setStyle(style));
-
-        return text;
+        return msg;
     }
 
     public static MutableText formatCoords(Vec3d pos) {
         String coordsString = String.format("(highlight)(underline)%.0f, %.0f, %.0f(default)", pos.x, pos.y, pos.z);
-        MutableText coordsText = formatMsg(coordsString, Formatting.GRAY);
-
-        Style style = coordsText.getStyle().withFormatting(Formatting.BOLD).withHoverEvent(new HoverEvent(
-            HoverEvent.Action.SHOW_TEXT,
-            Text.literal("Set as Baritone goal")
-        ));
-
-        if (BaritoneUtils.IS_AVAILABLE) {
-            style = style.withClickEvent(new MeteorClickEvent(
-                ClickEvent.Action.RUN_COMMAND,
-                String.format("%sgoto %d %d %d", BaritoneUtils.getPrefix(), (int) pos.x, (int) pos.y, (int) pos.z)
-            ));
-        }
-
-        coordsText.setStyle(style);
+        coordsString = formatMsg(coordsString, Formatting.GRAY);
+        MutableText coordsText = Text.literal(coordsString);
+        coordsText.setStyle(coordsText.getStyle()
+                .withFormatting(Formatting.BOLD)
+                .withClickEvent(new ClickEvent(
+                        ClickEvent.Action.RUN_COMMAND,
+                        String.format("%sgoto %d %d %d", BaritoneAPI.getSettings().prefix.value, (int) pos.x, (int) pos.y, (int) pos.z)
+                ))
+                .withHoverEvent(new HoverEvent(
+                        HoverEvent.Action.SHOW_TEXT,
+                        Text.literal("Set as Baritone goal")
+                ))
+        );
         return coordsText;
     }
 }

@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.client.util.math.MatrixStack;
 import org.lwjgl.BufferUtils;
 
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 
 public class CustomTextRenderer implements TextRenderer {
@@ -25,18 +26,18 @@ public class CustomTextRenderer implements TextRenderer {
 
     private boolean building;
     private boolean scaleOnly;
-    private double fontScale = 1;
     private double scale = 1;
 
     public CustomTextRenderer(FontFace fontFace) {
         this.fontFace = fontFace;
 
         byte[] bytes = Utils.readBytes(fontFace.toStream());
-        ByteBuffer buffer = BufferUtils.createByteBuffer(bytes.length).put(bytes).flip();
+        ByteBuffer buffer = BufferUtils.createByteBuffer(bytes.length).put(bytes);
 
         fonts = new Font[5];
         for (int i = 0; i < fonts.length; i++) {
-            fonts[i] = new Font(buffer, (int) Math.round(27 * ((i * 0.5) + 1)));
+            ((Buffer) buffer).flip();
+            fonts[i] = new Font(buffer, (int) Math.round(18 * ((i * 0.5) + 1)));
         }
     }
 
@@ -70,7 +71,7 @@ public class CustomTextRenderer implements TextRenderer {
         this.building = true;
         this.scaleOnly = scaleOnly;
 
-        this.fontScale = font.getHeight() / 27.0;
+        double fontScale = font.getHeight() / 18.0;
         this.scale = 1 + (scale - fontScale) / fontScale;
     }
 
@@ -79,13 +80,13 @@ public class CustomTextRenderer implements TextRenderer {
         if (text.isEmpty()) return 0;
 
         Font font = building ? this.font : fonts[0];
-        return (font.getWidth(text, length) + (shadow ? 1 : 0)) * scale / 1.5;
+        return (font.getWidth(text, length) + (shadow ? 1 : 0)) * scale + (shadow ? 1 : 0);
     }
 
     @Override
     public double getHeight(boolean shadow) {
         Font font = building ? this.font : fonts[0];
-        return (font.getHeight() + 1 + (shadow ? 1 : 0)) * scale / 1.5;
+        return (font.getHeight() + 1 + (shadow ? 1 : 0)) * scale;
     }
 
     @Override
@@ -98,13 +99,13 @@ public class CustomTextRenderer implements TextRenderer {
             int preShadowA = SHADOW_COLOR.a;
             SHADOW_COLOR.a = (int) (color.a / 255.0 * preShadowA);
 
-            width = font.render(mesh, text, x + fontScale * scale / 1.5, y + fontScale * scale / 1.5, SHADOW_COLOR, scale / 1.5);
-            font.render(mesh, text, x, y, color, scale / 1.5);
+            width = font.render(mesh, text, x + 1, y + 1, SHADOW_COLOR, scale);
+            font.render(mesh, text, x, y, color, scale);
 
             SHADOW_COLOR.a = preShadowA;
         }
         else {
-            width = font.render(mesh, text, x, y, color, scale / 1.5);
+            width = font.render(mesh, text, x, y, color, scale);
         }
 
         if (!wasBuilding) end();
@@ -129,9 +130,5 @@ public class CustomTextRenderer implements TextRenderer {
 
         building = false;
         scale = 1;
-    }
-
-    public void destroy() {
-        mesh.destroy();
     }
 }
