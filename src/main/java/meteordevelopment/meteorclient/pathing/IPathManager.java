@@ -24,6 +24,8 @@ public interface IPathManager {
 
     default void moveTo(BlockPos pos) { moveTo(pos, false); }
     void moveTo(BlockPos pos, boolean ignoreY);
+    /** Moves to the specified feet position instead of stopping beside a block. */
+    default void moveToExact(BlockPos pos) { moveTo(pos); }
     void moveInDirection(float yaw);
 
     void mine(Block... blocks);

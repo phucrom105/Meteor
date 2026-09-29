@@ -7,6 +7,7 @@ package meteordevelopment.meteorclient.pathing;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.pathing.goals.GoalXZ;
 import baritone.api.process.IBaritoneProcess;
@@ -99,6 +100,11 @@ public class BaritonePathManager implements IPathManager {
         }
 
         BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalGetToBlock(pos));
+    }
+
+    @Override
+    public void moveToExact(BlockPos pos) {
+        BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalBlock(pos));
     }
 
     @Override
